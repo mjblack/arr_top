@@ -1,0 +1,40 @@
+# GitHub Actions CI for arrtop.
+#
+# Dependencies (sonarr, radarr) are public GitHub shards, so no token is needed
+# even though this repo is private. The build goes through the Makefile so the
+# required -Dpreview_mt flag is always applied.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: "1.20.2"
+
+      - name: Install dependencies
+        run: make deps
+
+      - name: Check formatting
+        run: make check
+
+      - name: Lint
+        run: make lint
+
+      - name: Build (-Dpreview_mt)
+        run: make build
+
+      - name: Run specs
+        run: make test

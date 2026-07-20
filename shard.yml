@@ -1,0 +1,30 @@
+name: arr_top
+version: 0.1.0
+
+authors:
+  - Matthew J. Black <mjblack@gmail.com>
+
+description: |
+  arrtop — a top-like terminal UI for the Sonarr/Radarr download+import pipeline.
+  Sorts the queue by what's actively importing and draws real progress bars,
+  including disk-watched import (copy) progress the *arr API doesn't expose.
+
+targets:
+  arrtop:
+    main: src/main.cr
+
+crystal: '>= 1.20.2'
+
+license: MIT
+
+dependencies:
+  sonarr:
+    github: mjblack/sonarr
+    version: 0.2.0
+  radarr:
+    github: mjblack/radarr
+    version: 0.1.1
+
+development_dependencies:
+  ameba:
+    github: crystal-ameba/ameba

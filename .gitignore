@@ -1,0 +1,10 @@
+/docs/
+/lib/
+/bin/
+/.shards/
+*.dwarf
+
+# This is an application: shard.lock IS committed (reproducible builds).
+
+# Claude Code agent worktrees
+/.claude/worktrees/
