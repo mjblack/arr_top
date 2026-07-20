@@ -8,3 +8,10 @@
 
 # Claude Code agent worktrees
 /.claude/worktrees/
+
+# Local operator configs (the committed examples are the exception).
+/config.yaml
+/config.yml
+/config.json
+!/config.example.yaml
+!/config.example.json

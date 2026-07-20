@@ -1,0 +1,17 @@
+{
+  "_comment": "arrtop configuration (JSON). Same shape as config.example.yaml. Resolve it via ./config.json, --config <path>, or ARR_TOP_CONFIG. type is sonarr|radarr (lowercase).",
+  "backends": [
+    {
+      "name": "sonarr",
+      "type": "sonarr",
+      "url": "http://localhost:8989",
+      "api_key": "YOUR_SONARR_API_KEY"
+    },
+    {
+      "name": "radarr",
+      "type": "radarr",
+      "url": "http://localhost:7878",
+      "api_key": "YOUR_RADARR_API_KEY"
+    }
+  ]
+}

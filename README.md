@@ -4,8 +4,9 @@ A `top`-style terminal UI for the **Sonarr/Radarr** download → import pipeline
 It shows the queue sorted by what's actively **importing**, with real progress
 bars — including the one the *arr API can't give you: **import (copy) progress**.
 
-> **Status: scaffold.** The build, dependency wiring, and Makefile are in place;
-> the queue polling, TUI, and import disk-watch are the next work.
+> **Status: early.** The data layer (typed queue poller), config + CLI, and
+> logging are in place; a plain snapshot of the queue prints to stdout. The TUI
+> and import disk-watch are the next work.
 
 ## Why it exists
 
@@ -36,6 +37,45 @@ NFS from another client only updates at the *writer's* flush cadence (coarse,
 stepped) regardless of client cache settings; only the writing host's kernel
 reports the growing size in real time. A lighter API-only mode (download bars +
 import *state*, no copy %) can run anywhere.
+
+## Configuration
+
+arrtop reads a list of Sonarr/Radarr backends from a config file in **YAML or
+JSON** (the same shape in both — see `config.example.yaml` /
+`config.example.json`):
+
+```yaml
+backends:
+  - name: sonarr
+    type: sonarr          # sonarr | radarr (lowercase)
+    url: http://localhost:8989
+    api_key: YOUR_SONARR_API_KEY
+  - name: radarr
+    type: radarr
+    url: http://localhost:7878
+    api_key: YOUR_RADARR_API_KEY
+```
+
+The config path is resolved in this order:
+
+1. `-c`/`--config <path>`
+2. the `ARR_TOP_CONFIG` environment variable
+3. the first of `./config.yaml`, `./config.yml`, `./config.json` that exists
+
+If none resolves, arrtop prints an error and exits non-zero. The file extension
+picks the parser (`.yaml`/`.yml` → YAML, `.json` → JSON; anything else tries
+YAML then JSON). Every backend needs a non-blank `name`, `url`, `api_key`, and a
+recognized `type` (`sonarr` or `radarr`); validation reports **all** problems at
+once.
+
+Logging currently goes to **stderr** at the **Info** level (so the future TUI
+can own stdout). A configurable level lands in a later phase.
+
+```sh
+arrtop --version
+arrtop --help
+arrtop --config /etc/arrtop/config.yaml
+```
 
 ## Build
 

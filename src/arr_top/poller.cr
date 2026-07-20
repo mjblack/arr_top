@@ -1,3 +1,5 @@
+require "log"
+
 module ArrTop
   # Collects normalized `QueueRow`s from every configured backend and returns
   # them sorted so what's actively importing sorts first.
@@ -7,6 +9,9 @@ module ArrTop
   # recorded in `#errors` for a future UI to surface. `#rows` recomputes
   # `#errors` on each call.
   class Poller
+    # `Log` source for poll-loop messages.
+    Log = ::Log.for("arrtop.poller")
+
     # Backend name → error message for backends that failed on the last `#rows`.
     getter errors : Hash(String, String)
 
@@ -22,9 +27,13 @@ module ArrTop
       collected = [] of QueueRow
 
       @backends.each do |backend|
-        collected.concat(backend.rows)
+        backend_rows = backend.rows
+        Log.debug { "backend #{backend.name.inspect} returned #{backend_rows.size} rows" }
+        collected.concat(backend_rows)
       rescue ex
-        @errors[backend.name] = ex.message || ex.class.name
+        message = ex.message || ex.class.name
+        Log.debug { "backend #{backend.name.inspect} failed: #{message}" }
+        @errors[backend.name] = message
       end
 
       Poller.sort(collected)

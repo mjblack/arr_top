@@ -49,6 +49,30 @@ the destination file on disk, not the download client. `ameba` is the dev/lint d
   with `actimeo=0` — the limit is the writer's flush cadence, not reader cache.
   An API-only mode (download bars + import state, no copy %) can run anywhere.
 
+## Config, CLI, and logging
+
+- **`src/arr_top/config.cr`** — `ArrTop::Config` is both `YAML::Serializable` and
+  `JSON::Serializable` (same shape in both). Top-level `backends : Array(Backend)`;
+  each `Backend` has `name`, `type` (`BackendType` enum, serialized lowercase
+  `sonarr`/`radarr`, parsed leniently via `BackendTypeConverter` so an unknown
+  value becomes `nil` and surfaces as a validation error, not a parse crash),
+  `url`, and `api_key`. `Config.from_file` picks the parser by extension
+  (`.yaml`/`.yml` → YAML, `.json` → JSON, else YAML-then-JSON), wrapping
+  `File::Error` as `Config::Error`. `#validate`/`#validation_errors` require ≥1
+  backend and non-blank `name`/`url`/`api_key` + a recognized `type` per backend.
+- **`src/arr_top/cli.cr`** — `CLI.run` resolves the config path (`config_path`:
+  `-c`/`--config` → `ARR_TOP_CONFIG` → first of `./config.yaml,.yml,.json` →
+  `nil`), loads + validates, sets up logging, builds backends (`build_backends`
+  maps `type` → `SonarrBackend`/`RadarrBackend`, preserving order), polls once,
+  and prints a plain snapshot table (placeholder for the TUI). `--help`/`--version`
+  short-circuit. `config_path`/`build_backends` are `self.` methods so they're
+  unit-tested offline.
+- **`src/arr_top/logging.cr`** — `ArrTop.setup_logging` configures `::Log` to
+  **stderr** (so the future TUI owns stdout), currently **pinned to Info**; the
+  `level` param exists for the later configurable-level phase. `Log` sources are
+  scoped `arrtop.<area>` (`arrtop.cli`, `arrtop.poller`).
+- Config files are gitignored except the committed `config.example.{yaml,json}`.
+
 ## Workflow (GitHub, PR-based)
 
 Repo `mjblack/arr_top` (private). Work on feature branches, open PRs, CI must be
