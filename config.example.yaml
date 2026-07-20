@@ -1,0 +1,21 @@
+# arrtop configuration (YAML).
+#
+# Copy to one of the default-searched names in the working directory
+# (config.yaml / config.yml / config.json), or point at it explicitly with
+# `arrtop --config <path>` or the ARR_TOP_CONFIG environment variable.
+#
+# A JSON config with the same shape works too — see config.example.json.
+
+# One entry per Sonarr/Radarr instance to poll.
+backends:
+  # A Sonarr instance.
+  - name: sonarr            # human-readable label shown in the UI
+    type: sonarr            # sonarr | radarr (lowercase)
+    url: http://localhost:8989
+    api_key: YOUR_SONARR_API_KEY
+
+  # A Radarr instance.
+  - name: radarr
+    type: radarr
+    url: http://localhost:7878
+    api_key: YOUR_RADARR_API_KEY
