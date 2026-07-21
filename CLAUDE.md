@@ -74,15 +74,64 @@ the destination file on disk, not the download client. `ameba` is the dev/lint d
   (`.yaml`/`.yml` → YAML, `.json` → JSON, else YAML-then-JSON), wrapping
   `File::Error` as `Config::Error`. `#validate`/`#validation_errors` require ≥1
   backend and non-blank `name`/`url`/`api_key` + a recognized `type` per backend.
+  Optional top-level **`refresh`** (`String?`) sets the TUI redraw interval —
+  `#refresh_span : Time::Span` parses `<int>s` / `<int>ms` / a bare integer
+  (seconds), defaulting to **2s**; an unparseable-when-set value is a validation
+  error.
 - **`src/arr_top/cli.cr`** — `CLI.run` resolves the config path (`config_path`:
   `-c`/`--config` → `ARR_TOP_CONFIG` → first of `./config.yaml,.yml,.json` →
-  `nil`), loads + validates, sets up logging, builds backends (`build_backends`
-  maps `type` → `SonarrBackend`/`RadarrBackend`, preserving order), polls once,
-  and prints a plain snapshot table (placeholder for the TUI) — including a live
-  `IMPORT%` column that calls `ImportWatch.progress` for `Importing` rows and
-  shows `—` otherwise / off-host. `--help`/`--version`
-  short-circuit. `config_path`/`build_backends` are `self.` methods so they're
-  unit-tested offline.
+  `nil`), loads + validates, sets up logging, and builds backends
+  (`build_backends` maps `type` → `SonarrBackend`/`RadarrBackend`, preserving
+  order). It then **runs the TUI when `STDOUT.tty?`** (and `--once`/`-1` was not
+  given); otherwise — piped/redirected stdout, CI, or `--once` — it prints the
+  one-shot plain snapshot table (with the live `IMPORT%` column;
+  `—` off-host / non-importing). Snapshot writes are wrapped in `rescue
+  IO::Error` so `arrtop | head` (closed stdout) exits quietly.
+  `--help`/`--version` short-circuit. `config_path`/`build_backends`/`tui?`/
+  `once?` are `self.` methods so they're unit-tested offline.
+
+## TUI (`src/arr_top/{tui,terminal,render,import_rate}.cr`)
+
+The full-screen live view. **`TUI#run`** is **fiber-driven** (needs
+`-Dpreview_mt`) so a slow/hung backend can never freeze the UI or the keyboard:
+- a **poller fiber** loops `Poller#rows` → `@updates` channel, then
+  `sleep @refresh` (the blocking HTTP parks only that fiber's thread);
+- a **reader fiber** turns raw keypresses into bytes on `@keys` (and sends a
+  `nil` EOF sentinel when stdin closes);
+- the **UI fiber** keeps a cached `rows` snapshot and `select`s over `@keys`,
+  `@updates`, and a modest `ANIMATE_INTERVAL` timeout — it **never polls**: a
+  keypress just reflows the cached rows (so a resize still works), `@updates`
+  swaps in a fresh snapshot, and the animate tick redraws so live import copy
+  bars advance between polls.
+
+`build_frame` computes live `ImportWatch.progress` + an ETA per `Importing` row
+and assembles the frame (header, red `⚠` lines for `Poller#errors`, one row each,
+capped to the terminal height) written in a single `print` (cursor-home +
+per-line clear-to-EOL + clear-to-EOS) to avoid flicker. `q`/`Q`/Ctrl-C (byte 3)
+or stdin EOF quits; `TUI.quit?` is the pure, unit-tested predicate. On quit the
+poller fiber is stopped by **closing `@stop`** (which it watches via
+`receive?` — nil on close, so no `Channel::ClosedError` escapes and no fiber
+leaks); `@keys`/`@updates` are never closed.
+
+- **`render.cr`** — PURE, I/O-free, and the only part under unit test: `bar`,
+  `human_bytes`, `human_duration`, `truncate`, `header`, `render_row` (import bar
+  from `import.percent` for `Importing`, else download bar from
+  `download_percent`; width-aware so a line never wraps).
+- **`import_rate.cr`** — `ImportRateTracker#eta(dest_folder, progress)` derives a
+  best-effort import ETA from two successive disk readings
+  (`remaining ÷ bytes-per-sec`), keyed by `dest_folder`, timed with
+  `Time.instant` (monotonic); `nil` until it has two samples or on a file/rate
+  reset. The math lives in the **pure** class methods `.rate(delta_bytes, delta)`
+  / `.eta_from(remaining_bytes, delta_bytes, delta)` (plain `Int64`/`Time::Span`
+  in), which is what the specs test — no clock readings fabricated. Download rows
+  use the API's `timeleft`/`eta` instead.
+- **`terminal.cr`** — low-level control. `Terminal.size` reads `TIOCGWINSZ` via a
+  bound `LibC.ioctl` each redraw (so resize needs no `SIGWINCH`), falling back to
+  `{24, 80}`. `#start` enters the alt screen + hides the cursor + puts STDIN in
+  raw/no-echo (`IO::FileDescriptor#raw!`). **Terminal restore is guaranteed on
+  every exit path** — the `ensure` in `run`, `SIGINT`/`SIGTERM` traps, and an
+  `at_exit` backstop all call one **idempotent** `#restore` (leave alt screen,
+  show cursor, cooked mode). Never leave the terminal raw/hidden.
 - **`src/arr_top/logging.cr`** — `ArrTop.setup_logging` configures `::Log` to
   **stderr** (so the future TUI owns stdout), currently **pinned to Info**; the
   `level` param exists for the later configurable-level phase. `Log` sources are

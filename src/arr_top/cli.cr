@@ -2,10 +2,11 @@ require "log"
 
 module ArrTop
   # Command-line entry point: resolves the config path, loads + validates the
-  # config, sets up logging, builds a `Backend` per configured entry, polls them
-  # once, and prints a plain-text snapshot of the queue.
+  # config, sets up logging, builds a `Backend` per configured entry, then either
+  # runs the live TUI (`TUI`) or prints a one-shot snapshot of the queue.
   #
-  # The snapshot print is a placeholder for the TUI phase. The path resolution
+  # The default is the TUI when stdout is a terminal; a piped/redirected stdout
+  # (or `--once`/`-1`) falls back to the plain-text snapshot. The path resolution
   # and backend construction are factored into `config_path`/`build_backends` so
   # they can be unit-tested without touching the network or the process exit.
   module CLI
@@ -30,11 +31,18 @@ module ArrTop
     USAGE = <<-USAGE
       arrtop — a top-like view of the Sonarr/Radarr download + import queue.
 
-      usage: arrtop [-c|--config <path>] [-h|--help] [-v|--version]
+      usage: arrtop [-c|--config <path>] [-1|--once] [-h|--help] [-v|--version]
 
         -c, --config <path>   path to the config file (YAML or JSON)
+        -1, --once            print a one-shot snapshot and exit (no live view)
         -h, --help            show this help and exit
         -v, --version         show the version and exit
+
+      With a terminal on stdout, arrtop runs a full-screen live view (a top-like
+      TUI) that redraws on the `refresh` interval (config; default 2s) or the
+      instant you press a key. Press `q` (or Ctrl-C) to quit; the view resizes
+      with the terminal. When stdout is piped/redirected, or with --once, arrtop
+      prints a single plain-text snapshot instead.
 
       Config is resolved in this order:
         1. -c/--config <path>
@@ -77,16 +85,42 @@ module ArrTop
       Log.debug { "loaded config from #{path} (#{config.backends.size} backends)" }
 
       backends = build_backends(config)
-
       poller = Poller.new(backends)
+
+      # Live TUI when stdout is a terminal and --once was not given; otherwise a
+      # one-shot snapshot (piped/redirected output, CI, or an explicit --once).
+      if tui?(argv)
+        TUI.new(poller, config.refresh_span).run
+      else
+        run_snapshot(poller)
+      end
+    end
+
+    # Whether to run the interactive TUI: stdout is a terminal and `--once`/`-1`
+    # was not passed.
+    def self.tui?(argv : Array(String)) : Bool
+      STDOUT.tty? && !once?(argv)
+    end
+
+    # Whether *argv* forces the one-shot snapshot via `--once`/`-1`.
+    def self.once?(argv : Array(String)) : Bool
+      argv.any? { |arg| arg == "--once" || arg == "-1" }
+    end
+
+    # Polls every backend once and prints the plain-text snapshot. Writes are
+    # guarded against `IO::Error` (a closed stdout — e.g. `arrtop | head`) so the
+    # process exits quietly instead of crashing on a broken pipe.
+    private def self.run_snapshot(poller : Poller) : Nil
       rows = poller.rows
-      Log.debug { "polled #{backends.size} backends, #{rows.size} rows" }
+      Log.debug { "polled #{rows.size} rows" }
 
       poller.errors.each do |name, message|
         Log.error { "backend #{name.inspect} failed: #{message}" }
       end
 
       print_snapshot(rows)
+    rescue IO::Error
+      # stdout closed (broken pipe) — nothing more to say.
     end
 
     # The resolved config path, or `nil` when none is found. Precedence:
@@ -163,7 +197,7 @@ module ArrTop
     # dest. The IMPORT% column shows the live copy percentage read off disk for
     # `Importing` rows (see `ImportWatch`); it is `—` for non-importing rows and
     # for importing rows arrtop cannot watch (off-host, or the destination file
-    # not yet created). Placeholder output until the TUI phase.
+    # not yet created). Used for non-tty output and `--once`.
     private def self.print_snapshot(rows : Array(QueueRow)) : Nil
       if rows.empty?
         puts "queue is empty"
@@ -195,9 +229,11 @@ module ArrTop
     end
 
     # Truncates *str* to *width* chars, using a trailing `…` when it overflows.
+    # A non-positive *width* yields an empty string (a negative slice count would
+    # otherwise raise).
     private def self.truncate(str : String, width : Int32) : String
+      return "" if width <= 0
       return str if str.size <= width
-      return str[0, width] if width < 1
       "#{str[0, width - 1]}…"
     end
   end

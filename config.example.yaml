@@ -6,6 +6,10 @@
 #
 # A JSON config with the same shape works too — see config.example.json.
 
+# How often the live TUI redraws. Accepts <int>s, <int>ms, or a bare integer
+# (seconds). Optional; defaults to 2s.
+# refresh: 2s
+
 # One entry per Sonarr/Radarr instance to poll.
 backends:
   # A Sonarr instance.

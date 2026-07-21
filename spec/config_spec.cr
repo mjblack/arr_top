@@ -123,6 +123,45 @@ describe ArrTop::Config do
     end
   end
 
+  describe "#refresh_span" do
+    it "defaults to 2 seconds when unset" do
+      ArrTop::Config.from_yaml(VALID_YAML).refresh_span.should eq(2.seconds)
+    end
+
+    it "parses an <int>s value" do
+      yaml = "#{VALID_YAML}\nrefresh: 5s"
+      ArrTop::Config.from_yaml(yaml).refresh_span.should eq(5.seconds)
+    end
+
+    it "parses an <int>ms value" do
+      yaml = "#{VALID_YAML}\nrefresh: 500ms"
+      ArrTop::Config.from_yaml(yaml).refresh_span.should eq(500.milliseconds)
+    end
+
+    it "parses a bare integer as seconds" do
+      yaml = "#{VALID_YAML}\nrefresh: 3"
+      ArrTop::Config.from_yaml(yaml).refresh_span.should eq(3.seconds)
+    end
+
+    it "falls back to the default for an unparseable value" do
+      yaml = "#{VALID_YAML}\nrefresh: soon"
+      ArrTop::Config.from_yaml(yaml).refresh_span.should eq(2.seconds)
+    end
+  end
+
+  describe "#validation_errors (refresh)" do
+    it "reports an unparseable refresh value" do
+      yaml = "#{VALID_YAML}\nrefresh: soon"
+      errors = ArrTop::Config.from_yaml(yaml).validation_errors
+      errors.any?(&.includes?("refresh")).should be_true
+    end
+
+    it "accepts a valid refresh value" do
+      yaml = "#{VALID_YAML}\nrefresh: 250ms"
+      ArrTop::Config.from_yaml(yaml).validation_errors.should be_empty
+    end
+  end
+
   describe ".from_file" do
     it "picks the YAML parser for .yaml and .yml" do
       ["config.yaml", "config.yml"].each do |name|
