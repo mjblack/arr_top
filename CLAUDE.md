@@ -107,9 +107,12 @@ channel that the loop `select`s against `timeout(@refresh)` (needs
   `download_percent`; width-aware so a line never wraps).
 - **`import_rate.cr`** — `ImportRateTracker#eta(dest_folder, progress)` derives a
   best-effort import ETA from two successive disk readings
-  (`remaining ÷ bytes-per-sec`), keyed by `dest_folder`, using `Time.monotonic`
-  (the `now` is injectable for tests); `nil` until it has two samples or on a
-  file/rate reset. Download rows use the API's `timeleft`/`eta` instead.
+  (`remaining ÷ bytes-per-sec`), keyed by `dest_folder`, timed with
+  `Time.instant` (monotonic); `nil` until it has two samples or on a file/rate
+  reset. The math lives in the **pure** class methods `.rate(delta_bytes, delta)`
+  / `.eta_from(remaining_bytes, delta_bytes, delta)` (plain `Int64`/`Time::Span`
+  in), which is what the specs test — no clock readings fabricated. Download rows
+  use the API's `timeleft`/`eta` instead.
 - **`terminal.cr`** — low-level control. `Terminal.size` reads `TIOCGWINSZ` via a
   bound `LibC.ioctl` each redraw (so resize needs no `SIGWINCH`), falling back to
   `{24, 80}`. `#start` enters the alt screen + hides the cursor + puts STDIN in

@@ -5,62 +5,85 @@ private def progress(bytes : Int64, target : Int64 = 1000_i64) : ArrTop::ImportP
 end
 
 describe ArrTop::ImportRateTracker do
+  describe ".rate" do
+    it "is bytes gained over seconds elapsed" do
+      ArrTop::ImportRateTracker.rate(500_i64, 5.seconds).should eq(100.0)
+    end
+
+    it "is nil when no time elapsed" do
+      ArrTop::ImportRateTracker.rate(500_i64, Time::Span.zero).should be_nil
+    end
+
+    it "is nil when no bytes gained (a stall)" do
+      ArrTop::ImportRateTracker.rate(0_i64, 5.seconds).should be_nil
+    end
+
+    it "is nil when bytes decreased (a reset)" do
+      ArrTop::ImportRateTracker.rate(-100_i64, 5.seconds).should be_nil
+    end
+  end
+
+  describe ".eta_from" do
+    it "is remaining ÷ rate from raw deltas" do
+      # 200 bytes gained over 2s => 100 B/s; 700 remaining => 7s.
+      ArrTop::ImportRateTracker.eta_from(
+        remaining_bytes: 700_i64, delta_bytes: 200_i64, delta: 2.seconds
+      ).should eq(7.seconds)
+    end
+
+    it "is nil on a zero-time delta (unknown rate)" do
+      ArrTop::ImportRateTracker.eta_from(
+        remaining_bytes: 700_i64, delta_bytes: 200_i64, delta: Time::Span.zero
+      ).should be_nil
+    end
+
+    it "is nil on a stall (no bytes gained)" do
+      ArrTop::ImportRateTracker.eta_from(
+        remaining_bytes: 700_i64, delta_bytes: 0_i64, delta: 2.seconds
+      ).should be_nil
+    end
+
+    it "is nil when the file shrank (reset)" do
+      ArrTop::ImportRateTracker.eta_from(
+        remaining_bytes: 700_i64, delta_bytes: -300_i64, delta: 2.seconds
+      ).should be_nil
+    end
+
+    it "is nil once nothing remains" do
+      ArrTop::ImportRateTracker.eta_from(
+        remaining_bytes: 0_i64, delta_bytes: 200_i64, delta: 2.seconds
+      ).should be_nil
+    end
+  end
+
   describe "#eta" do
-    it "returns nil on the first sample" do
+    it "returns nil on the first sample (needs two)" do
       tracker = ArrTop::ImportRateTracker.new
-      tracker.eta("/data", progress(100_i64), now: 0.seconds).should be_nil
+      tracker.eta("/data", progress(100_i64)).should be_nil
     end
 
-    it "computes remaining/rate from two samples with injected times" do
+    it "produces a positive span once two live samples exist" do
       tracker = ArrTop::ImportRateTracker.new
-      # 100 bytes at t=0, 300 bytes at t=2s => 100 bytes/sec.
-      tracker.eta("/data", progress(100_i64, 1000_i64), now: 0.seconds).should be_nil
-      eta = tracker.eta("/data", progress(300_i64, 1000_i64), now: 2.seconds)
-      # remaining = 1000 - 300 = 700; rate = 200/2 = 100 B/s => 7s.
-      eta.should eq(7.seconds)
+      tracker.eta("/data", progress(100_i64)).should be_nil
+      # The monotonic clock advances a tiny amount between calls, so a real (if
+      # large) ETA is produced; only its sign is deterministic here. The exact
+      # timing math is covered by the .rate/.eta_from specs above.
+      eta = tracker.eta("/data", progress(300_i64))
+      # Non-nil and strictly positive (nil would make `try` yield nil, not true).
+      eta.try(&.positive?).should be_true
     end
 
-    it "returns nil when the file shrinks (reset)" do
+    it "returns nil when the watched file shrinks (reset)" do
       tracker = ArrTop::ImportRateTracker.new
-      tracker.eta("/data", progress(500_i64), now: 0.seconds)
-      tracker.eta("/data", progress(100_i64), now: 1.seconds).should be_nil
-    end
-
-    it "returns nil on a stall (no bytes gained)" do
-      tracker = ArrTop::ImportRateTracker.new
-      tracker.eta("/data", progress(200_i64), now: 0.seconds)
-      tracker.eta("/data", progress(200_i64), now: 1.seconds).should be_nil
-    end
-
-    it "returns nil once the target is reached" do
-      tracker = ArrTop::ImportRateTracker.new
-      tracker.eta("/data", progress(500_i64, 1000_i64), now: 0.seconds)
-      tracker.eta("/data", progress(1000_i64, 1000_i64), now: 1.seconds).should be_nil
+      tracker.eta("/data", progress(500_i64))
+      tracker.eta("/data", progress(100_i64)).should be_nil
     end
 
     it "tracks destinations independently" do
       tracker = ArrTop::ImportRateTracker.new
-      tracker.eta("/a", progress(100_i64, 1000_i64), now: 0.seconds).should be_nil
-      # /b's first sample must not borrow /a's.
-      tracker.eta("/b", progress(100_i64, 1000_i64), now: 2.seconds).should be_nil
-      tracker.eta("/a", progress(200_i64, 1000_i64), now: 1.seconds).should eq(8.seconds)
-    end
-  end
-
-  describe "#rate" do
-    it "is bytes gained over seconds elapsed" do
-      tracker = ArrTop::ImportRateTracker.new
-      tracker.rate(0_i64, 0.seconds, 500_i64, 5.seconds).should eq(100.0)
-    end
-
-    it "is nil when no time elapsed" do
-      tracker = ArrTop::ImportRateTracker.new
-      tracker.rate(0_i64, 2.seconds, 500_i64, 2.seconds).should be_nil
-    end
-
-    it "is nil when no bytes gained" do
-      tracker = ArrTop::ImportRateTracker.new
-      tracker.rate(500_i64, 0.seconds, 500_i64, 5.seconds).should be_nil
+      tracker.eta("/a", progress(100_i64)).should be_nil
+      # /b's first sample must not borrow /a's history.
+      tracker.eta("/b", progress(100_i64)).should be_nil
     end
   end
 end

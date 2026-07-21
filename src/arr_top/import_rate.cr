@@ -12,11 +12,13 @@ module ArrTop
   # returns `nil` until it has two samples, and resets (nil) when the watched
   # file shrinks — a new/replaced file — so a stale rate is never shown.
   #
-  # Deltas use `Time.monotonic`, which never jumps backward on a clock change.
-  # The `now` argument is injectable so the calculation is unit-testable.
+  # Timing uses `Time.instant` (a monotonic clock that never jumps backward). The
+  # instant-based bookkeeping stays inside `#eta`; the actual math lives in the
+  # pure class methods `.rate`/`.eta_from`, which take plain `Int64`/`Time::Span`
+  # deltas so they can be unit-tested without fabricating clock readings.
   class ImportRateTracker
     # One reading: bytes seen so far and the monotonic instant it was taken.
-    record Sample, bytes : Int64, at : Time::Span
+    record Sample, bytes : Int64, at : Time::Instant
 
     def initialize
       @samples = {} of String => Sample
@@ -25,31 +27,38 @@ module ArrTop
     # The estimated time remaining for the copy at *dest_folder*, or `nil` when
     # it cannot be computed yet: fewer than two samples, no measurable time or
     # byte gain between them (a stall), the file shrank (reset), or the target is
-    # already reached. Records *progress* as the latest sample on every call.
-    def eta(dest_folder : String, progress : ImportProgress, now : Time::Span = Time.monotonic) : Time::Span?
+    # already reached. Records the latest sample on every call.
+    def eta(dest_folder : String, progress : ImportProgress) : Time::Span?
+      now = Time.instant
       previous = @samples[dest_folder]?
       @samples[dest_folder] = Sample.new(progress.bytes, now)
 
       return nil if previous.nil?
-      return nil if progress.bytes < previous.bytes # file replaced/reset
 
-      remaining = progress.target - progress.bytes
-      return nil if remaining <= 0
-
-      rate = rate(previous.bytes, previous.at, progress.bytes, now)
-      return nil if rate.nil? || rate <= 0
-
-      (remaining.to_f / rate).seconds
+      ImportRateTracker.eta_from(
+        remaining_bytes: progress.target - progress.bytes,
+        delta_bytes: progress.bytes - previous.bytes,
+        delta: now - previous.at,
+      )
     end
 
-    # Pure bytes/sec between two samples, or `nil` when time did not advance or no
-    # bytes were gained (a stall — treated as "unknown", not "infinite").
-    def rate(prev_bytes : Int64, prev_at : Time::Span, curr_bytes : Int64, curr_at : Time::Span) : Float64?
-      elapsed = (curr_at - prev_at).total_seconds
-      return nil if elapsed <= 0
-      gained = curr_bytes - prev_bytes
-      return nil if gained <= 0
-      gained.to_f / elapsed
+    # Pure ETA from raw deltas: `remaining_bytes ÷ rate`, or `nil` when the rate
+    # is unknown (stall / no time elapsed / file reset) or nothing remains.
+    def self.eta_from(remaining_bytes : Int64, delta_bytes : Int64, delta : Time::Span) : Time::Span?
+      return nil if remaining_bytes <= 0
+      bytes_per_second = rate(delta_bytes, delta)
+      return nil if bytes_per_second.nil?
+      (remaining_bytes.to_f / bytes_per_second).seconds
+    end
+
+    # Pure bytes/sec from a byte delta over a time delta, or `nil` when time did
+    # not advance or no bytes were gained (a stall or a reset — treated as
+    # "unknown", not "infinite").
+    def self.rate(delta_bytes : Int64, delta : Time::Span) : Float64?
+      seconds = delta.total_seconds
+      return nil if seconds <= 0
+      return nil if delta_bytes <= 0
+      delta_bytes.to_f / seconds
     end
   end
 end
