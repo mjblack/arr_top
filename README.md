@@ -4,10 +4,10 @@ A `top`-style terminal UI for the **Sonarr/Radarr** download → import pipeline
 It shows the queue sorted by what's actively **importing**, with real progress
 bars — including the one the *arr API can't give you: **import (copy) progress**.
 
-> **Status: early.** The data layer (typed queue poller), config + CLI,
-> logging, and the **import disk-watch** are in place; a plain snapshot of the
-> queue — now with a live `IMPORT%` column — prints to stdout. The TUI is the
-> next work.
+> **Status: usable.** The data layer (typed queue poller), config + CLI,
+> logging, the **import disk-watch**, and the **full-screen live TUI** are in
+> place. On a terminal `arrtop` runs the live view; piped/redirected (or with
+> `--once`) it prints a one-shot snapshot with a live `IMPORT%` column.
 
 ## Why it exists
 
@@ -73,6 +73,7 @@ JSON** (the same shape in both — see `config.example.yaml` /
 `config.example.json`):
 
 ```yaml
+refresh: 2s                 # TUI redraw interval; optional (default 2s)
 backends:
   - name: sonarr
     type: sonarr          # sonarr | radarr (lowercase)
@@ -84,7 +85,9 @@ backends:
     api_key: YOUR_RADARR_API_KEY
 ```
 
-The config path is resolved in this order:
+`refresh` accepts `<int>s`, `<int>ms`, or a bare integer (seconds); it sets how
+often the live view redraws (it also wakes instantly on a keypress). The config
+path is resolved in this order:
 
 1. `-c`/`--config <path>`
 2. the `ARR_TOP_CONFIG` environment variable
@@ -96,14 +99,37 @@ YAML then JSON). Every backend needs a non-blank `name`, `url`, `api_key`, and a
 recognized `type` (`sonarr` or `radarr`); validation reports **all** problems at
 once.
 
-Logging currently goes to **stderr** at the **Info** level (so the future TUI
-can own stdout). A configurable level lands in a later phase.
+Logging goes to **stderr** at the **Info** level (so the TUI can own stdout). A
+configurable level lands in a later phase.
 
 ```sh
 arrtop --version
 arrtop --help
 arrtop --config /etc/arrtop/config.yaml
+arrtop --once                 # one-shot snapshot, skip the live view
 ```
+
+## The live view (TUI)
+
+Run `arrtop` on a terminal and it opens a full-screen, `top`-style live view:
+one line per queue item — state, title, a progress bar (the live **import** copy
+bar for importing rows, the **download** bar otherwise), the percentage, and an
+ETA — under a header summarizing the counts. An unreachable *arr shows as a red
+`⚠` line rather than silently vanishing.
+
+- **Keys:** `q` (or `Q`, or `Ctrl-C`) quits.
+- **Refresh:** redraws every `refresh` (config; default 2s), and instantly on any
+  keypress.
+- **Auto-resize:** the layout follows the terminal size on each redraw (no
+  `SIGWINCH` needed).
+- **Terminal-safe:** the terminal is always restored — alt screen left, cursor
+  shown, cooked mode — on quit, `SIGINT`/`SIGTERM`, an uncaught exception, and at
+  process exit. It never leaves your terminal in raw mode.
+
+**Snapshot fallback.** When stdout is **not** a terminal (piped or redirected —
+e.g. CI, `arrtop > out.txt`, `arrtop | head`), or when you pass `--once`/`-1`,
+arrtop prints a single plain-text table instead of entering the TUI. Snapshot
+output tolerates a closed pipe, so `arrtop | head` exits quietly.
 
 ## Build
 

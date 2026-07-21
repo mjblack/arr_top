@@ -1,5 +1,6 @@
 {
-  "_comment": "arrtop configuration (JSON). Same shape as config.example.yaml. Resolve it via ./config.json, --config <path>, or ARR_TOP_CONFIG. type is sonarr|radarr (lowercase).",
+  "_comment": "arrtop configuration (JSON). Same shape as config.example.yaml. Resolve it via ./config.json, --config <path>, or ARR_TOP_CONFIG. type is sonarr|radarr (lowercase). refresh (optional) sets the TUI redraw interval as <int>s / <int>ms / a bare integer of seconds; default 2s.",
+  "refresh": "2s",
   "backends": [
     {
       "name": "sonarr",

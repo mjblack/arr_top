@@ -77,7 +77,46 @@ module ArrTop
 
     property backends : Array(Backend) = [] of Backend
 
-    def initialize(@backends : Array(Backend) = [] of Backend)
+    # How often the TUI redraws, as `<int>s` / `<int>ms` / a bare integer
+    # (seconds). `nil` (unset) means the default; see `#refresh_span`. Validated
+    # by `#validation_errors` when set.
+    property refresh : String? = nil
+
+    def initialize(@backends : Array(Backend) = [] of Backend, @refresh : String? = nil)
+    end
+
+    # Default TUI refresh interval when `refresh` is unset/blank/unparseable.
+    DEFAULT_REFRESH = 2.seconds
+
+    # The refresh interval as a `Time::Span`: the parsed `refresh` value, or
+    # `DEFAULT_REFRESH` (2s) otherwise. (An unparseable value is also reported by
+    # `#validation_errors`.)
+    def refresh_span : Time::Span
+      parse_refresh(refresh) || DEFAULT_REFRESH
+    end
+
+    # Parses a refresh string: `<int>ms` → milliseconds, `<int>s` → seconds, a
+    # bare positive integer → seconds. Returns `nil` for nil/blank/malformed
+    # input or a non-positive number.
+    private def parse_refresh(value : String?) : Time::Span?
+      return nil if value.nil?
+      text = value.strip.downcase
+      return nil if text.empty?
+
+      if text.ends_with?("ms")
+        positive_int(text[0...-2]).try(&.milliseconds)
+      elsif text.ends_with?("s")
+        positive_int(text[0...-1]).try(&.seconds)
+      else
+        positive_int(text).try(&.seconds)
+      end
+    end
+
+    # Parses *text* as a strictly-positive integer, or `nil` when it is not a
+    # positive whole number.
+    private def positive_int(text : String) : Int32?
+      number = text.to_i?
+      number if number && number > 0
     end
 
     # Loads a config from `path`. YAML wins: `.yml`/`.yaml` parse as YAML,
@@ -129,6 +168,11 @@ module ArrTop
         errors << "#{label}: api_key is required" if backend.api_key.blank?
         errors << "#{label}: type must be one of sonarr, radarr" if backend.type.nil?
       end
+
+      if (value = refresh) && parse_refresh(value).nil?
+        errors << "refresh #{value.inspect} is invalid; use <int>s, <int>ms, or a bare integer (seconds)"
+      end
+
       errors
     end
 
