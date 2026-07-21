@@ -4,9 +4,10 @@ A `top`-style terminal UI for the **Sonarr/Radarr** download → import pipeline
 It shows the queue sorted by what's actively **importing**, with real progress
 bars — including the one the *arr API can't give you: **import (copy) progress**.
 
-> **Status: early.** The data layer (typed queue poller), config + CLI, and
-> logging are in place; a plain snapshot of the queue prints to stdout. The TUI
-> and import disk-watch are the next work.
+> **Status: early.** The data layer (typed queue poller), config + CLI,
+> logging, and the **import disk-watch** are in place; a plain snapshot of the
+> queue — now with a live `IMPORT%` column — prints to stdout. The TUI is the
+> next work.
 
 ## Why it exists
 
@@ -28,6 +29,33 @@ importing item      → movie.path / series.path (API: the destination folder)
 import %            = file bytes / target
 done                = movie.hasFile flips true (movieFile.path populates)
 ```
+
+## The import disk-watch
+
+For a row whose state is `importing`, `ArrTop::ImportWatch.progress` turns the
+API's destination **folder** plus copy **target** (`queue.size`, carried on the
+row as `import_target`) into a live copy percentage read straight off disk:
+
+- **Recursive walk.** The destination is a folder — Radarr's movie folder, or
+  Sonarr's series folder where the file lands in a `Season NN/` subfolder — so
+  the walk descends into subfolders to collect every regular file.
+- **No `Dir.glob` (metacharacter gotcha).** Real *arr folder names embed glob
+  metacharacters — `Jurassic Park (1993) {tmdb-329} [Bluray-1080p]` — that
+  `Dir.glob` would interpret as patterns instead of literal path segments. The
+  walk is therefore **manual** (`Dir.children` + `File.info`), and every
+  filesystem call is rescued so a file that vanishes mid-copy or an unreadable
+  subdirectory is skipped, not fatal.
+- **Most-recent-mtime selection.** Among the video files (`.mkv .mp4 .avi .m4v
+  .ts .m2ts .mov .wmv .mpg .mpeg .webm .flv`), it picks the one with the newest
+  modification time — the file actively being written. This deliberately beats a
+  largest-size heuristic: during an upgrade the old full file sits beside the new
+  partial one, and "largest" would wrongly pick the old file.
+- **`import% = file bytes / target`**, clamped to `[0, 100]` (the growing file
+  can momentarily overshoot the target).
+- **Off-host degrades to `—` (unknown), never crashes.** When the folder does
+  not exist or cannot be read (arrtop running off the *arr host), or the import
+  has not created the file yet, `progress` returns `nil` and the CLI shows `—` in
+  the `IMPORT%` column. Non-importing rows show `—` there too.
 
 ## Runs on the *arr host (important)
 

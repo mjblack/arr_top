@@ -42,7 +42,21 @@ the destination file on disk, not the download client. `ameba` is the dev/lint d
   **destination folder** (`movie.path` / `series.path`) and the **copy target**
   (`queue.size`); it does NOT give copy progress (`sizeleft: 0`, `hasFile:
   false`). Read the growing destination file's size on disk → `import% = bytes /
-  size`. Completion = `movie.hasFile`/`episodeFile` flips true.
+  size`. Completion = `movie.hasFile`/`episodeFile` flips true. Implemented in
+  **`src/arr_top/import_watch.cr`** — `ImportWatch.progress(dest_folder, target)`
+  → `ImportProgress?` — with these load-bearing details:
+  - **Recursive walk** of the folder (Sonarr drops the file in a `Season NN/`
+    subfolder), collecting regular files.
+  - **Never `Dir.glob`.** *arr folder names contain glob metacharacters
+    (`… {tmdb-329} [Bluray-1080p]`) that `Dir.glob` would misread as patterns, so
+    the walk is manual (`Dir.children` + `File.info`), each FS call rescued
+    (files vanish mid-copy; dirs can be unreadable → skip).
+  - **Most-recent-mtime** wins among video files (extension set), not
+    largest-size — during an upgrade the old full file sits beside the new
+    partial one and "largest" would pick the wrong one.
+  - `percent` clamps to `[0, 100]`. Off-host (folder missing/unreadable) or
+    file-not-yet-created → `nil`; the CLI renders that as `—` in the `IMPORT%`
+    column (`Log.debug`, not error — off-host is expected, must never crash).
 - **Must run on the *arr host.** The import bar reads the file the *arr is
   writing; only the writing host's kernel reports its size in real time.
   Watching over NFS from another client is coarse (writer-flush granularity) even
@@ -64,7 +78,9 @@ the destination file on disk, not the download client. `ameba` is the dev/lint d
   `-c`/`--config` → `ARR_TOP_CONFIG` → first of `./config.yaml,.yml,.json` →
   `nil`), loads + validates, sets up logging, builds backends (`build_backends`
   maps `type` → `SonarrBackend`/`RadarrBackend`, preserving order), polls once,
-  and prints a plain snapshot table (placeholder for the TUI). `--help`/`--version`
+  and prints a plain snapshot table (placeholder for the TUI) — including a live
+  `IMPORT%` column that calls `ImportWatch.progress` for `Importing` rows and
+  shows `—` otherwise / off-host. `--help`/`--version`
   short-circuit. `config_path`/`build_backends` are `self.` methods so they're
   unit-tested offline.
 - **`src/arr_top/logging.cr`** — `ArrTop.setup_logging` configures `::Log` to

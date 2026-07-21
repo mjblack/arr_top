@@ -159,25 +159,39 @@ module ArrTop
     # Width the title column is truncated to in the snapshot table.
     TITLE_WIDTH = 50
 
-    # Prints a plain aligned table of *rows*: state, download %, title, dest.
-    # Placeholder output until the TUI phase.
+    # Prints a plain aligned table of *rows*: state, download %, import %, title,
+    # dest. The IMPORT% column shows the live copy percentage read off disk for
+    # `Importing` rows (see `ImportWatch`); it is `—` for non-importing rows and
+    # for importing rows arrtop cannot watch (off-host, or the destination file
+    # not yet created). Placeholder output until the TUI phase.
     private def self.print_snapshot(rows : Array(QueueRow)) : Nil
       if rows.empty?
         puts "queue is empty"
         return
       end
 
-      printf("%-14s %6s  %-*s  %s\n", "STATE", "DL%", TITLE_WIDTH, "TITLE", "DEST")
+      printf("%-14s %6s %8s  %-*s  %s\n", "STATE", "DL%", "IMPORT%", TITLE_WIDTH, "TITLE", "DEST")
       rows.each do |row|
         printf(
-          "%-14s %5.1f%%  %-*s  %s\n",
+          "%-14s %5.1f%% %8s  %-*s  %s\n",
           row.state.to_s,
           row.download_percent,
+          import_percent(row),
           TITLE_WIDTH,
           truncate(row.title || "", TITLE_WIDTH),
           row.dest_folder || "",
         )
       end
+    end
+
+    # The IMPORT% cell for *row*: the live copy percentage (e.g. `26.0%`) for an
+    # `Importing` row arrtop can watch on disk, or `—` for every other row and
+    # when the copy is unwatchable (off-host / destination file not yet created).
+    private def self.import_percent(row : QueueRow) : String
+      return "—" unless row.state == State::Importing
+
+      progress = ImportWatch.progress(row.dest_folder, row.import_target)
+      progress ? "#{progress.percent.round(1)}%" : "—"
     end
 
     # Truncates *str* to *width* chars, using a trailing `…` when it overflows.
