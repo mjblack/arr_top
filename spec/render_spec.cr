@@ -91,6 +91,11 @@ describe ArrTop::Render do
     it "is 0s for non-positive" do
       ArrTop::Render.human_duration(Time::Span.zero).should eq("0s")
     end
+
+    it "caps absurd spans at 99h+" do
+      ArrTop::Render.human_duration(100.hours).should eq("99h+")
+      ArrTop::Render.human_duration(1_000_000.hours).should eq("99h+")
+    end
   end
 
   describe ".truncate" do

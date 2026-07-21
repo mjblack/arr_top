@@ -53,11 +53,13 @@ module ArrTop
     end
 
     # Formats a span like `1h20m` (hours+minutes), `5m3s` (minutes+seconds), or
-    # `42s`. Non-positive spans are `0s`.
+    # `42s`. Non-positive spans are `0s`; anything past 99h caps at `99h+` so a
+    # near-stalled import's ETA can't blow the column out to `27777777h46m`.
     def self.human_duration(span : Time::Span) : String
       total = span.total_seconds.to_i64
       return "0s" if total <= 0
       hours = total // 3600
+      return "99h+" if hours > 99
       minutes = (total % 3600) // 60
       seconds = total % 60
       if hours > 0

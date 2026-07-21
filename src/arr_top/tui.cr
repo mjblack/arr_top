@@ -1,18 +1,27 @@
 require "log"
 
 module ArrTop
-  # The full-screen, `top`-style live view. Polls the `Poller` on an interval,
-  # draws one line per queue row (with download or live import progress bars) and
-  # a header, and redraws every `@refresh` — or immediately when a key is pressed.
+  # The full-screen, `top`-style live view: one line per queue row (download or
+  # live import progress bar) under a header, redrawn continuously.
   #
-  # Concurrency (needs `-Dpreview_mt`): a reader fiber turns raw keypresses into
-  # bytes on a channel; the main loop `select`s over that channel and a
-  # `timeout(@refresh)`, so it wakes the instant a key arrives yet still refreshes
-  # on schedule. `q`/`Q`/Ctrl-C quits.
+  # Concurrency (needs `-Dpreview_mt`) — three fibers, so a slow/hung backend
+  # never freezes the UI or the keyboard:
+  # - **Poller fiber (producer):** loops `@poller.rows` → `@updates`, then
+  #   `sleep @refresh`. The blocking HTTP call parks this fiber's thread while the
+  #   UI keeps running on another; a stuck poll can't block quit.
+  # - **Reader fiber:** turns raw keypresses into bytes on `@keys`; sends the
+  #   `nil` EOF sentinel when stdin closes.
+  # - **UI fiber (this one, consumer):** keeps a cached `rows` snapshot and
+  #   `select`s over `@keys`, `@updates`, and a modest animate `timeout`. It only
+  #   ever *reads* cached rows — it never polls — so key-mashing (an arrow key is
+  #   3 raw bytes) can't hammer the *arr API.
   #
-  # Terminal restore is guaranteed by `Terminal` (see there): the `ensure` below
-  # plus signal traps and an `at_exit` backstop all funnel to one idempotent
-  # `restore`, so no exit path leaves the terminal in raw mode.
+  # `q`/`Q`/Ctrl-C (or stdin EOF) quits. On quit the poller fiber is stopped
+  # (`@stop` closed) so nothing leaks, and terminal restore is guaranteed by
+  # `Terminal` — the `ensure` here plus signal traps and an `at_exit` backstop all
+  # funnel to one idempotent `restore`. No `Channel::ClosedError` escapes: the
+  # poller watches `@stop` with `receive?` (nil on close), and `@keys`/`@updates`
+  # are never closed.
   class TUI
     Log = ::Log.for("arrtop.tui")
 
@@ -25,34 +34,101 @@ module ArrTop
     # no longer uses).
     CLEAR_EOS = "\e[J"
 
+    # How often the UI redraws the *cached* rows between polls, so live import
+    # copy bars (read fresh off disk in `build_frame`) animate smoothly even while
+    # the poller sleeps. This never polls the backends.
+    ANIMATE_INTERVAL = 1.second
+
     def initialize(@poller : Poller, @refresh : Time::Span, @terminal : Terminal = Terminal.new)
       @rates = ImportRateTracker.new
-      @keys = Channel(UInt8).new(capacity: 16)
+      # `nil` is the EOF sentinel the reader sends when stdin closes (so the loop
+      # can quit without `close` making `receive` raise in the `select`).
+      @keys = Channel(UInt8?).new(capacity: 16)
+      # Fresh row snapshots from the poller fiber.
+      @updates = Channel(Array(QueueRow)).new
+      # Closed by the UI fiber on quit to stop the poller fiber (no leak).
+      @stop = Channel(Nil).new
     end
 
-    # Runs the TUI until the user quits. Starts the terminal, spawns the key
-    # reader, and loops poll → draw → wait. The `ensure` restores the terminal on
-    # every exit (normal, exception, quit).
+    # Runs the TUI until the user quits (or stdin hits EOF). Seeds an empty
+    # snapshot (drawn immediately — no blocking on the first poll), spawns the
+    # producer/reader fibers, then consumes updates and keypresses. The `ensure`
+    # stops the poller and restores the terminal on every exit.
     def run : Nil
       @terminal.start
       spawn_reader
+      spawn_poller
+
+      rows = [] of QueueRow
+      @terminal.write(build_frame(rows, @terminal.size))
 
       loop do
-        frame = build_frame(@poller.rows, @terminal.size)
-        @terminal.write(frame)
-        break if wait_for_key
+        select
+        when byte = @keys.receive
+          break if quit?(byte)
+          # Non-quit key: reflow the cached rows for a possible resize only.
+          @terminal.write(build_frame(rows, @terminal.size))
+        when new_rows = @updates.receive
+          rows = new_rows
+          @terminal.write(build_frame(rows, @terminal.size))
+        when timeout(ANIMATE_INTERVAL)
+          # Redraw cached rows so live import bars/ETAs advance between polls.
+          @terminal.write(build_frame(rows, @terminal.size))
+        end
       end
     ensure
+      stop_poller
       @terminal.stop
     end
 
+    # Poller fiber (producer): polls every backend, publishes the snapshot on
+    # `@updates`, then sleeps `@refresh` — repeating until `@stop` is closed. Both
+    # the publish and the sleep race `@stop.receive?` so shutdown is prompt and a
+    # consumer that has gone away can't wedge it. `@poller.rows` blocking parks
+    # only this fiber's thread (`-Dpreview_mt`).
+    private def spawn_poller : Nil
+      spawn do
+        loop do
+          rows = @poller.rows
+
+          select
+          when @stop.receive?
+            break
+          when @updates.send(rows)
+            # delivered
+          end
+
+          select
+          when @stop.receive?
+            break
+          when timeout(@refresh)
+            # next poll
+          end
+        end
+      rescue ex
+        Log.debug { "poller fiber stopped: #{ex.message}" }
+      end
+    end
+
+    # Signals the poller fiber to stop. Idempotent-safe under the single `ensure`
+    # caller; a double close is swallowed so shutdown never raises.
+    private def stop_poller : Nil
+      @stop.close
+    rescue Channel::ClosedError
+    end
+
     # Reader fiber: blocks on raw input and forwards each byte to `@keys`. Under
-    # raw mode every keypress returns immediately; at EOF the fiber ends.
+    # raw mode every keypress returns immediately. At EOF it sends the `nil`
+    # sentinel so `#run` exits cleanly instead of redrawing forever with no way
+    # to quit from the keyboard (e.g. `arrtop < /dev/null` in a terminal).
     private def spawn_reader : Nil
       spawn do
         loop do
           byte = @terminal.read_byte
-          break if byte.nil?
+          if byte.nil?
+            @keys.send(nil)
+            break
+          end
           @keys.send(byte)
         end
       rescue ex
@@ -60,22 +136,16 @@ module ArrTop
       end
     end
 
-    # Waits up to `@refresh` for a keypress. Returns `true` when a quit key
-    # (`q`/`Q`/Ctrl-C) was pressed, `false` on any other key or on timeout (both
-    # just trigger the next redraw).
-    private def wait_for_key : Bool
-      select
-      when byte = @keys.receive
-        quit_key?(byte)
-      when timeout(@refresh)
-        false
-      end
+    # Whether *byte* means "quit": the stdin-EOF sentinel (`nil`), `q`, `Q`, or
+    # Ctrl-C (ETX, byte 3 — delivered as input because raw mode disables the
+    # SIGINT a cooked terminal would send). Pure, so it's unit-tested directly.
+    def self.quit?(byte : UInt8?) : Bool
+      byte.nil? || byte == 'q'.ord || byte == 'Q'.ord || byte == 3
     end
 
-    # Whether *byte* is a quit key: `q`, `Q`, or Ctrl-C (ETX, byte 3 — delivered
-    # as input because raw mode disables the SIGINT that a cooked terminal sends).
-    private def quit_key?(byte : UInt8) : Bool
-      byte == 'q'.ord || byte == 'Q'.ord || byte == 3
+    # :ditto:
+    def quit?(byte : UInt8?) : Bool
+      TUI.quit?(byte)
     end
 
     # Builds the full frame string for *rows* at terminal *size*: cursor-home,

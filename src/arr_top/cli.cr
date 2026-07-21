@@ -229,9 +229,11 @@ module ArrTop
     end
 
     # Truncates *str* to *width* chars, using a trailing `…` when it overflows.
+    # A non-positive *width* yields an empty string (a negative slice count would
+    # otherwise raise).
     private def self.truncate(str : String, width : Int32) : String
+      return "" if width <= 0
       return str if str.size <= width
-      return str[0, width] if width < 1
       "#{str[0, width - 1]}…"
     end
   end

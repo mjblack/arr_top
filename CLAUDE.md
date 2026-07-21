@@ -92,14 +92,26 @@ the destination file on disk, not the download client. `ameba` is the dev/lint d
 
 ## TUI (`src/arr_top/{tui,terminal,render,import_rate}.cr`)
 
-The full-screen live view. **`TUI#run`** loops poll → draw → wait: it polls
-`Poller#rows`, computes live `ImportWatch.progress` + an ETA per `Importing`
-row, builds one frame (header, red `⚠` lines for `Poller#errors`, one row each,
-capped to the terminal height) and writes it in a single `print` (cursor-home +
-per-line clear-to-EOL + clear-to-EOS) to avoid flicker. It redraws every
-`refresh` **or** the instant a key arrives — a reader fiber feeds keypresses to a
-channel that the loop `select`s against `timeout(@refresh)` (needs
-`-Dpreview_mt`). `q`/`Q`/Ctrl-C quits.
+The full-screen live view. **`TUI#run`** is **fiber-driven** (needs
+`-Dpreview_mt`) so a slow/hung backend can never freeze the UI or the keyboard:
+- a **poller fiber** loops `Poller#rows` → `@updates` channel, then
+  `sleep @refresh` (the blocking HTTP parks only that fiber's thread);
+- a **reader fiber** turns raw keypresses into bytes on `@keys` (and sends a
+  `nil` EOF sentinel when stdin closes);
+- the **UI fiber** keeps a cached `rows` snapshot and `select`s over `@keys`,
+  `@updates`, and a modest `ANIMATE_INTERVAL` timeout — it **never polls**: a
+  keypress just reflows the cached rows (so a resize still works), `@updates`
+  swaps in a fresh snapshot, and the animate tick redraws so live import copy
+  bars advance between polls.
+
+`build_frame` computes live `ImportWatch.progress` + an ETA per `Importing` row
+and assembles the frame (header, red `⚠` lines for `Poller#errors`, one row each,
+capped to the terminal height) written in a single `print` (cursor-home +
+per-line clear-to-EOL + clear-to-EOS) to avoid flicker. `q`/`Q`/Ctrl-C (byte 3)
+or stdin EOF quits; `TUI.quit?` is the pure, unit-tested predicate. On quit the
+poller fiber is stopped by **closing `@stop`** (which it watches via
+`receive?` — nil on close, so no `Channel::ClosedError` escapes and no fiber
+leaks); `@keys`/`@updates` are never closed.
 
 - **`render.cr`** — PURE, I/O-free, and the only part under unit test: `bar`,
   `human_bytes`, `human_duration`, `truncate`, `header`, `render_row` (import bar

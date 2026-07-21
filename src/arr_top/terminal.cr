@@ -73,6 +73,16 @@ module ArrTop
     # no matter how the process ends. Raw mode is best-effort: if STDIN is not a
     # tty it is skipped (the caller only starts a TUI when STDOUT is a tty).
     def start : Nil
+      # Register the restore hooks FIRST, before touching the terminal, so a
+      # `kill -INT`/`-TERM` arriving mid-setup still restores instead of leaving
+      # the terminal raw and on the alt screen. cfmakeraw disables ISIG, so a
+      # keyboard Ctrl-C does not raise SIGINT (the TUI reads byte 3 instead);
+      # these traps still catch an external signal. `restore` is a no-op until
+      # `@active` is set, so firing before setup completes is harmless.
+      Signal::INT.trap { restore; exit 130 }
+      Signal::TERM.trap { restore; exit 143 }
+      at_exit { restore }
+
       @lock.synchronize do
         return if @active
         @active = true
@@ -88,13 +98,6 @@ module ArrTop
           # simply blocks on whatever input arrives.
         end
       end
-
-      # Restore on signals and at process exit. cfmakeraw disables ISIG, so a
-      # keyboard Ctrl-C does not raise SIGINT (the TUI reads byte 3 instead);
-      # these traps still catch an external `kill -INT`/`-TERM`.
-      Signal::INT.trap { restore; exit 130 }
-      Signal::TERM.trap { restore; exit 143 }
-      at_exit { restore }
     end
 
     # Restores the terminal to its normal state: cooked input, cursor shown,
