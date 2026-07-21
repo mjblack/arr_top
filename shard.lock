@@ -22,9 +22,9 @@ shards:
 
   radarr:
     git: https://github.com/mjblack/radarr.git
-    version: 0.1.1
+    version: 0.1.2
 
   sonarr:
     git: https://github.com/mjblack/sonarr.git
-    version: 0.2.0
+    version: 0.2.1
 

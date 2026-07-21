@@ -27,8 +27,8 @@ The Makefile bakes in the flag; never hand-run `crystal build` without it.
 
 Reuse our own shards (both **public** on GitHub — no token needed):
 
-- **`sonarr`** (`github: mjblack/sonarr`, 0.2.0) — typed Sonarr API v3 client.
-- **`radarr`** (`github: mjblack/radarr`, 0.1.1) — typed Radarr API v3 client.
+- **`sonarr`** (`github: mjblack/sonarr`, 0.2.1) — typed Sonarr API v3 client.
+- **`radarr`** (`github: mjblack/radarr`, 0.1.2) — typed Radarr API v3 client.
 
 No qBittorrent/download-client dependency: arrtop works from the *arr queue plus
 the destination file on disk, not the download client. `ameba` is the dev/lint dep.
