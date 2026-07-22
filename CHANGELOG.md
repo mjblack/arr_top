@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-22
+
+### Added
+
+- Release GitHub Actions workflow that builds native **`.deb`** and **`.rpm`**
+  packages (via nfpm) and attaches them to the GitHub release. Each installs the
+  `arrtop` binary to `/usr/bin/arrtop`, a man page to
+  `/usr/share/man/man1/arrtop.1`, and an example config to
+  `/etc/arr_top/config.yaml.example`.
+- Config lookup now also checks **`/etc/arr_top`**: the resolution order is
+  `--config` → `$ARR_TOP_CONFIG` → `./config.{yaml,yml,json}` →
+  `/etc/arr_top/config.{yaml,yml,json}` → none (a local config still wins over the
+  system one).
+- A man page, `arrtop(1)`.
+
 ## [0.3.0] - 2026-07-22
 
 ### Changed
