@@ -92,8 +92,13 @@ path is resolved in this order:
 1. `-c`/`--config <path>`
 2. the `ARR_TOP_CONFIG` environment variable
 3. the first of `./config.yaml`, `./config.yml`, `./config.json` that exists
+4. the first of `/etc/arr_top/config.yaml`, `/etc/arr_top/config.yml`,
+   `/etc/arr_top/config.json` that exists
 
-If none resolves, arrtop prints an error and exits non-zero. The file extension
+A local `./config.*` therefore overrides a system-wide one. The `.deb`/`.rpm`
+packages ship `/etc/arr_top/config.yaml.example`; copy it to
+`/etc/arr_top/config.yaml` (drop the `.example`) to use the system-wide
+location. If none resolves, arrtop prints an error and exits non-zero. The file extension
 picks the parser (`.yaml`/`.yml` → YAML, `.json` → JSON; anything else tries
 YAML then JSON). Every backend needs a non-blank `name`, `url`, `api_key`, and a
 recognized `type` (`sonarr` or `radarr`); validation reports **all** problems at

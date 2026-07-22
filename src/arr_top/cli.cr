@@ -22,6 +22,16 @@ module ArrTop
     # neither `--config`/`-c` nor `ARR_TOP_CONFIG` is given.
     DEFAULT_CONFIG_FILES = ["config.yaml", "config.yml", "config.json"]
 
+    # System-wide config paths searched (in order) after the current-directory
+    # defaults. A local `./config.*` therefore overrides a system one. This is
+    # where the native package (.deb/.rpm) directs operators to place their
+    # config (copied from the shipped `config.yaml.example`).
+    SYSTEM_CONFIG_FILES = [
+      "/etc/arr_top/config.yaml",
+      "/etc/arr_top/config.yml",
+      "/etc/arr_top/config.json",
+    ]
+
     # Flags that consume the following argument as their value. The argument
     # after one of these is that flag's value and must never be mistaken for
     # something else while scanning `argv`.
@@ -48,6 +58,7 @@ module ArrTop
         1. -c/--config <path>
         2. $#{CONFIG_ENV}
         3. the first of ./config.yaml, ./config.yml, ./config.json that exists
+        4. the first of /etc/arr_top/config.yaml, .yml, .json that exists
 
       Logs are written to stderr at the Info level.
       USAGE
@@ -68,7 +79,8 @@ module ArrTop
       path = config_path(argv)
       if path.nil?
         STDERR.puts "no config file found — looked for ./config.yaml, ./config.yml, " \
-                    "./config.json; pass --config <path> or set #{CONFIG_ENV}"
+                    "./config.json, then /etc/arr_top/config.{yaml,yml,json}; " \
+                    "pass --config <path> or set #{CONFIG_ENV}"
         exit 1
       end
 
@@ -125,7 +137,9 @@ module ArrTop
 
     # The resolved config path, or `nil` when none is found. Precedence:
     # `-c`/`--config <path>` → `$ARR_TOP_CONFIG` (if non-blank) → the first
-    # existing of `DEFAULT_CONFIG_FILES` in the CWD → `nil`.
+    # existing of the current-directory defaults → the first existing of the
+    # `/etc/arr_top` system-wide defaults → `nil`. A local `./config.*` thus
+    # overrides a system one.
     def self.config_path(argv : Array(String)) : String?
       if explicit = config_flag(argv)
         return explicit
@@ -135,7 +149,15 @@ module ArrTop
         return env
       end
 
-      DEFAULT_CONFIG_FILES.find { |candidate| File.exists?(candidate) }
+      default_config_candidates.find { |candidate| File.exists?(candidate) }
+    end
+
+    # The ordered list of config-file candidates tried when neither `--config`
+    # nor `$ARR_TOP_CONFIG` selects a path: the current-directory defaults
+    # first, then the `/etc/arr_top` system-wide fallbacks. Pure — it consults
+    # no filesystem and no environment, so the search order is unit-testable.
+    def self.default_config_candidates : Array(String)
+      DEFAULT_CONFIG_FILES + SYSTEM_CONFIG_FILES
     end
 
     # The `--config`/`-c` value from *argv*, or `nil` when the flag is absent.

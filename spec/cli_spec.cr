@@ -83,6 +83,32 @@ describe ArrTop::CLI do
     end
   end
 
+  describe ".default_config_candidates" do
+    it "searches the CWD defaults before the /etc/arr_top system defaults" do
+      candidates = ArrTop::CLI.default_config_candidates
+
+      # The current-directory defaults come first, in the documented order.
+      candidates.first(3).should eq(["config.yaml", "config.yml", "config.json"])
+
+      # The /etc/arr_top fallbacks come after them, so a local config wins.
+      candidates.should contain("/etc/arr_top/config.yaml")
+      candidates.should contain("/etc/arr_top/config.yml")
+      candidates.should contain("/etc/arr_top/config.json")
+
+      candidates.index!("/etc/arr_top/config.yaml")
+        .should be > candidates.index!("config.json")
+    end
+
+    it "orders the /etc fallbacks yaml, yml, json" do
+      etc = ArrTop::CLI.default_config_candidates.select(&.starts_with?("/etc/arr_top/"))
+      etc.should eq([
+        "/etc/arr_top/config.yaml",
+        "/etc/arr_top/config.yml",
+        "/etc/arr_top/config.json",
+      ])
+    end
+  end
+
   describe ".build_backends" do
     it "maps sonarr → SonarrBackend and radarr → RadarrBackend, preserving order" do
       config = ArrTop::Config.from_yaml(<<-YAML)

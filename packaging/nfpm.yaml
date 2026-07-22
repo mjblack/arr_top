@@ -1,0 +1,78 @@
+# nfpm configuration for arrtop — one config produces both .deb and .rpm.
+#
+# Build (VERSION must be exported; paths are relative to the repo root):
+#   crystal build -Dpreview_mt --release src/main.cr -o bin/arrtop
+#   VERSION=0.3.0 nfpm package --config packaging/nfpm.yaml --packager deb --target .
+#   VERSION=0.3.0 nfpm package --config packaging/nfpm.yaml --packager rpm --target .
+#
+# arrtop is an interactive TUI, not a daemon: the package installs the binary,
+# a man page, and an example config under /etc/arr_top — nothing more. No
+# systemd unit, no service user, no /var/lib dir, no maintainer scripts. The
+# example ships as a *.example conffile so an upgrade never clobbers a real
+# /etc/arr_top/config.yaml the operator wrote.
+#
+# Runtime dependency set is derived from `ldd bin/arrtop`:
+#   libssl.so.3  libcrypto.so.3  libyaml-0.so.2  libpcre2-8.so.0  libz.so.1
+#   (libc/libm/libgcc_s are base; no sqlite, no libgc/libevent).
+name: arrtop
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: semver
+maintainer: Matthew J. Black <mjblack@gmail.com>
+description: |
+  arrtop — a top-like terminal UI for the Sonarr/Radarr download+import
+  pipeline. Sorts the queue by what's actively importing and draws real
+  progress bars, including disk-watched import (copy) progress the *arr API
+  doesn't expose.
+homepage: https://github.com/mjblack/arr_top
+license: MIT
+section: utils
+priority: optional
+
+contents:
+  - src: bin/arrtop
+    dst: /usr/bin/arrtop
+    file_info:
+      mode: 0755
+
+  # Man page (uncompressed; `man arrtop` reads it as-is).
+  - src: man/arrtop.1
+    dst: /usr/share/man/man1/arrtop.1
+    file_info:
+      mode: 0644
+
+  # Example config installed into /etc/arr_top (this creates the directory).
+  # Shipped as a *.example conffile so an upgrade never overwrites a real config
+  # the operator wrote; the user copies config.yaml.example -> config.yaml.
+  # (JSON is also a valid config format, but only the YAML example is shipped.)
+  - src: config.example.yaml
+    dst: /etc/arr_top/config.yaml.example
+    type: config
+    file_info:
+      mode: 0644
+
+  - src: README.md
+    dst: /usr/share/doc/arrtop/README.md
+    file_info:
+      mode: 0644
+
+  - src: LICENSE
+    dst: /usr/share/doc/arrtop/LICENSE
+    file_info:
+      mode: 0644
+
+overrides:
+  deb:
+    depends:
+      - libc6
+      - libssl3 | libssl3t64
+      - libyaml-0-2
+      - libpcre2-8-0
+      - zlib1g
+  rpm:
+    depends:
+      - openssl-libs
+      - libyaml
+      - pcre2
+      - zlib
