@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-22
+
+### Fixed
+
+- Season-pack imports now show a correct **per-episode** bar instead of the same
+  bar on every episode. Each episode row matches its own destination file by its
+  `SxxEyy` token: the episode currently copying shows a live bar, an
+  already-imported episode shows 100%, and one whose file does not exist yet is
+  shown as **pending** (no bar).
+
+### Changed
+
+- The media column shows the episode for Sonarr rows (e.g. `The Show S02E03`),
+  not just the series name, and its header label is now **MEDIA** (it holds both
+  movies and episodes).
+
 ## [0.3.2] - 2026-07-22
 
 ### Fixed
