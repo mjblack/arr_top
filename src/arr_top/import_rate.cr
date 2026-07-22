@@ -30,8 +30,10 @@ module ArrTop
     # pays for only one sample per frame, not two.
     #
     # Both are `nil` until a second sample exists, and both reset to `nil` on a
-    # stall (no gain), a zero-time delta, or a shrunk file. The ETA is
-    # additionally `nil` once nothing remains to copy.
+    # zero-time delta or a shrunk file. A no-growth interval is a *measured
+    # stall*: the **rate** reports `0.0` (a copy that isn't advancing, not
+    # "unknown"), while the **eta** stays `nil` (nothing divides by a 0 rate).
+    # The ETA is additionally `nil` once nothing remains to copy.
     def measure(dest_folder : String, progress : ImportProgress) : {rate: Float64?, eta: Time::Span?}
       now = Time.instant
       previous = @samples[dest_folder]?
@@ -60,21 +62,24 @@ module ArrTop
     end
 
     # Pure ETA from raw deltas: `remaining_bytes ÷ rate`, or `nil` when the rate
-    # is unknown (stall / no time elapsed / file reset) or nothing remains.
+    # is unknown or zero (a stall, no time elapsed, or a file reset) or nothing
+    # remains. A 0-rate stall gives NO ETA — we never divide by zero (Infinity).
     def self.eta_from(remaining_bytes : Int64, delta_bytes : Int64, delta : Time::Span) : Time::Span?
       return nil if remaining_bytes <= 0
       bytes_per_second = rate(delta_bytes, delta)
-      return nil if bytes_per_second.nil?
+      return nil if bytes_per_second.nil? || bytes_per_second <= 0.0
       (remaining_bytes.to_f / bytes_per_second).seconds
     end
 
-    # Pure bytes/sec from a byte delta over a time delta, or `nil` when time did
-    # not advance or no bytes were gained (a stall or a reset — treated as
-    # "unknown", not "infinite").
+    # Pure bytes/sec from a byte delta over a time delta. A no-growth interval
+    # (`delta_bytes == 0`) with elapsed time is a *measured stall* and reports
+    # `0.0`, not nil. Returns `nil` only when time did not advance
+    # (`seconds <= 0`) or the file shrank/reset (`delta_bytes < 0`) — those stay
+    # "unknown".
     def self.rate(delta_bytes : Int64, delta : Time::Span) : Float64?
       seconds = delta.total_seconds
       return nil if seconds <= 0
-      return nil if delta_bytes <= 0
+      return nil if delta_bytes < 0
       delta_bytes.to_f / seconds
     end
   end

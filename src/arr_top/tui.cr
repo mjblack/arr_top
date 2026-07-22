@@ -83,22 +83,40 @@ module ArrTop
     end
 
     # Poller fiber (producer): polls every backend, publishes the snapshot on
-    # `@updates`, then sleeps `@refresh` — repeating until `@stop` is closed. Both
-    # the publish and the sleep race `@stop.receive?` so shutdown is prompt and a
+    # `@updates`, then waits `@refresh` — repeating until `@stop` is closed. Both
+    # the publish and the wait race `@stop.receive?` so shutdown is prompt and a
     # consumer that has gone away can't wedge it. `@poller.rows` blocking parks
     # only this fiber's thread (`-Dpreview_mt`).
+    #
+    # Per-iteration-retry invariant: a poll that raises is caught INSIDE the
+    # loop, logged visibly, and skipped — the fiber does NOT publish (keeping the
+    # last good frame) but STILL runs the `@stop`-vs-`timeout` wait, so it retries
+    # every backend on the next tick and never terminates on a poll error. The
+    # outer `rescue` is only a last-resort backstop for a truly unexpected exit.
     private def spawn_poller : Nil
       spawn do
         loop do
-          rows = @poller.rows
+          rows =
+            begin
+              @poller.rows
+            rescue ex
+              Log.warn { "poll failed; retrying in #{@refresh}: #{ex.message}" }
+              nil
+            end
 
-          select
-          when @stop.receive?
-            break
-          when @updates.send(rows)
-            # delivered
+          # Publish only a successful poll; a nil (failed) poll keeps the last
+          # frame on screen. The send races `@stop.receive?` so quit is immediate.
+          if rows
+            select
+            when @stop.receive?
+              break
+            when @updates.send(rows)
+              # delivered
+            end
           end
 
+          # Always wait a tick (even after a failure) so a stuck backend is
+          # retried next round and quit stays prompt.
           select
           when @stop.receive?
             break
@@ -107,7 +125,7 @@ module ArrTop
           end
         end
       rescue ex
-        Log.debug { "poller fiber stopped: #{ex.message}" }
+        Log.error { "poller fiber stopped unexpectedly: #{ex.message}" }
       end
     end
 
@@ -202,8 +220,10 @@ module ArrTop
     end
 
     # The aggregated import copy speed across watchable importing rows, e.g.
-    # `↓ 45.20 MB/s`, or `""` when nothing measurable is copying. Calls
-    # `ImportRateTracker#measure` once per folder (recording this frame's sample).
+    # `Import Speed 45.20 MB/s`, or `""` when nothing measurable is copying. The
+    # "Import Speed" label is explicit so it is not mistaken for the download
+    # client's (e.g. qBittorrent) download rate. Calls `ImportRateTracker#measure`
+    # once per folder (recording this frame's sample).
     private def aggregate_speed(rows : Array(QueueRow), imports : Array(ImportProgress?)) : String
       total = 0.0
       any = false
@@ -217,7 +237,7 @@ module ArrTop
           any = true
         end
       end
-      any ? "↓ #{Render.human_bytes(total.to_i64)}/s" : ""
+      any ? "Import Speed #{Render.human_bytes(total.to_i64)}/s" : ""
     end
 
     # Fits [top, header, divider, *content, bottom] into *max_lines*, dropping the
