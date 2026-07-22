@@ -53,7 +53,14 @@ module ArrTop
     # an upgrade a full old file sits beside the new partial one, and the
     # largest-size heuristic would wrongly pick the old file — the freshly
     # written file is the one with the newest mtime.
-    def self.progress(dest_folder : String?, target : Int64) : ImportProgress?
+    #
+    # When *season* and *episode* are both given (Sonarr episode rows), only the
+    # video file whose name carries that episode's `SxxEyy` token is considered —
+    # a season pack drops N episodes into ONE series folder, so without this
+    # filter every episode row would watch the same single newest file. Movies
+    # (nil season/episode) keep the folder-wide "newest video file" behaviour.
+    def self.progress(dest_folder : String?, target : Int64,
+                      season : Int32? = nil, episode : Int32? = nil) : ImportProgress?
       return nil if dest_folder.nil?
       folder = dest_folder.strip
       return nil if folder.empty?
@@ -64,7 +71,8 @@ module ArrTop
         return nil
       end
 
-      newest = newest_video_file(folder)
+      pattern = (season && episode) ? episode_pattern(season, episode) : nil
+      newest = newest_video_file(folder, pattern)
       if newest.nil?
         Log.debug { "no video file yet under #{folder}" }
         return nil
@@ -76,18 +84,31 @@ module ArrTop
       progress
     end
 
+    # A case-insensitive regex matching a filename's `SxxEyy` token for the given
+    # *season*/*episode*, tolerant of zero-padding (`S2E3` == `S02E03`). The
+    # leading `\b` anchors the season, the optional `(E\d+)*?` run lets an earlier
+    # episode in a multi-episode file (`S02E03E04`) be skipped so BOTH episode 3
+    # and episode 4 match their own token, and the trailing `(\b|E)` accepts a
+    # boundary or the next `E` in that run.
+    private def self.episode_pattern(season : Int32, episode : Int32) : Regex
+      Regex.new("\\bS0*#{season}(E\\d+)*?E0*#{episode}(\\b|E)", Regex::Options::IGNORE_CASE)
+    end
+
     # Recursively finds the most-recently-modified video file under *root*,
-    # returning `{path, size}` or `nil` when none is found. Every filesystem call
-    # is guarded: files can vanish mid-copy and directories can be unreadable, so
-    # a failing entry is skipped rather than aborting the whole walk (an
-    # unreadable root simply yields `nil`).
-    private def self.newest_video_file(root : String) : {String, Int64}?
+    # returning `{path, size}` or `nil` when none is found. When *pattern* is
+    # given, only video files whose *basename* matches it are considered (used to
+    # pick a single episode's file out of a season pack). Every filesystem call is
+    # guarded: files can vanish mid-copy and directories can be unreadable, so a
+    # failing entry is skipped rather than aborting the whole walk (an unreadable
+    # root simply yields `nil`).
+    private def self.newest_video_file(root : String, pattern : Regex? = nil) : {String, Int64}?
       best_path : String? = nil
       best_mtime = Time.unix(0)
       best_size = 0_i64
 
       walk(root) do |path, info|
         next unless video?(path)
+        next if pattern && !pattern.matches?(File.basename(path))
         mtime = info.modification_time
         if best_path.nil? || mtime > best_mtime
           best_path = path

@@ -128,11 +128,12 @@ module ArrTop
 
     # The status-label colour code for *row*: any warning/error row (or the
     # `Failed` state) is red, overriding the per-state colour; otherwise the
-    # colour follows the normalized `State`.
-    def status_code(row : QueueRow) : String
-      return @status_failed if row.warning? || row.state == State::Failed
+    # colour follows the normalized `State`. *state* defaults to `row.state` but
+    # may be the reclassified display state (e.g. a season-pack row shown pending).
+    def status_code(row : QueueRow, state : State = row.state) : String
+      return @status_failed if row.warning? || state == State::Failed
 
-      case row.state
+      case state
       when State::Importing     then @status_importing
       when State::ImportPending then @status_pending
       when State::Downloading   then @status_downloading

@@ -41,6 +41,11 @@ describe ArrTop::RadarrBackend do
       row.download_id.should eq("FEDCBA9876543210")
       row.indexer.should eq("Movie Indexer")
       row.dest_folder.should eq("/movies/Some Movie (2026)")
+      # Movies are single-file: no episode identity.
+      row.media_name.should eq("Some Movie")
+      row.season_number.should be_nil
+      row.episode_number.should be_nil
+      row.episode_has_file.should be_nil
     end
 
     it "flags a warning when trackedDownloadStatus is error" do

@@ -57,6 +57,18 @@ module ArrTop
     # `:episode` (Sonarr) or `:movie` (Radarr).
     getter media_kind : Symbol
 
+    # Sonarr episode identity, used to match this row's own on-disk file (a season
+    # pack lands N episodes in one series folder, so the import watch needs the
+    # season+episode to find *this* episode's file). `nil` for movies / when the
+    # *arr did not embed the episode.
+    getter season_number : Int32?
+    getter episode_number : Int32?
+
+    # Whether this episode already has an imported file on disk (Sonarr's
+    # `episodeHasFile`). Used to reclassify a "still importing" season-pack row as
+    # done (100%) even when filename matching can't confirm it. `nil` for movies.
+    getter episode_has_file : Bool?
+
     # The release/torrent name (what the download client sees).
     getter title : String?
 
@@ -100,7 +112,9 @@ module ArrTop
                    @timeleft : String? = nil, @eta : Time? = nil,
                    @protocol : String? = nil, @download_client : String? = nil,
                    @download_id : String? = nil, @indexer : String? = nil,
-                   @dest_folder : String? = nil)
+                   @dest_folder : String? = nil,
+                   @season_number : Int32? = nil, @episode_number : Int32? = nil,
+                   @episode_has_file : Bool? = nil)
     end
 
     # Download progress as a 0–100 percentage; 0 when the total size is unknown.

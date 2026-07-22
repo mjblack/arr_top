@@ -184,16 +184,19 @@ module ArrTop
       interior = cols - 2
       max_lines = {size[:rows], 1}.max
 
-      # One pass: read each row's live import progress once, then derive the
-      # aggregate copy speed from it (a single sample per folder per frame).
-      imports = rows.map { |row| import_progress(row) }
+      # One pass: read each row's live import progress once, reclassify it into an
+      # effective display state (+ possibly synthesized progress), then derive the
+      # aggregate copy speed from the effective progress (one sample per folder).
+      decisions = rows.map { |row| TUI.display_state_and_progress(row, import_progress(row)) }
+      states = decisions.map { |decision| decision[0] }
+      imports = decisions.map { |decision| decision[1] }
       speed = aggregate_speed(rows, imports)
 
-      top = Render.top_border(cols, counts(rows), speed, @theme)
+      top = Render.top_border(cols, counts(states), speed, @theme)
       bottom = Render.bottom_border(cols, @theme)
       header = Render.wrap(Render.header_row(@theme, interior), cols, @theme)
       divider = Render.divider(cols, @theme)
-      content = content_lines(rows, imports, cols, interior)
+      content = content_lines(rows, states, imports, cols, interior)
 
       frame_string(layout(max_lines, top, header, divider, content, bottom))
     end
@@ -201,7 +204,8 @@ module ArrTop
     # The wrapped content lines: backend-error lines first, then either an
     # empty-queue message or one data row per queue entry. Each is exactly *cols*
     # wide (interior padded to *interior*, wrapped in the side borders).
-    private def content_lines(rows : Array(QueueRow), imports : Array(ImportProgress?),
+    private def content_lines(rows : Array(QueueRow), states : Array(State),
+                              imports : Array(ImportProgress?),
                               cols : Int32, interior : Int32) : Array(String)
       lines = [] of String
       @poller.errors.each do |name, message|
@@ -213,7 +217,8 @@ module ArrTop
         lines << Render.wrap(empty, cols, @theme)
       else
         rows.each_with_index do |row, i|
-          lines << Render.wrap(Render.render_row(row, imports[i], @theme, interior), cols, @theme)
+          line = Render.render_row(row, imports[i], @theme, interior, states[i])
+          lines << Render.wrap(line, cols, @theme)
         end
       end
       lines
@@ -282,7 +287,38 @@ module ArrTop
     private def import_progress(row : QueueRow) : ImportProgress?
       return nil unless row.state == State::Importing
       return nil if row.dest_folder.nil?
-      ImportWatch.progress(row.dest_folder, row.import_target)
+      # Episode rows pass season/episode so ImportWatch matches THIS episode's
+      # file out of a season pack; movies pass nil → legacy newest-file behaviour.
+      ImportWatch.progress(row.dest_folder, row.import_target,
+        row.season_number, row.episode_number)
+    end
+
+    # Pure reclassification: given a row and the import progress found on disk for
+    # it, decide the effective display `State` and the `ImportProgress?` to render.
+    #
+    # Only a Sonarr **episode** row the *arr reports as `Importing` is touched (a
+    # season pack lists one importing row per episode, all sharing one folder):
+    # - `episode_has_file` ⇒ Importing at 100% (synthesize a full progress if the
+    #   on-disk match didn't already read ~100%, so a done episode always reads
+    #   100% even when filename matching failed);
+    # - else a matched on-disk file ⇒ Importing with that file's bar;
+    # - else (no file yet) ⇒ ImportPending (pending, no bar).
+    # Movie rows and non-importing rows keep their real state and import.
+    def self.display_state_and_progress(row : QueueRow, on_disk : ImportProgress?) : {State, ImportProgress?}
+      return {row.state, on_disk} unless row.media_kind == :episode && row.state == State::Importing
+
+      if row.episode_has_file
+        done = on_disk
+        if done.nil? || done.percent < 100.0
+          file = on_disk.try(&.file) || ""
+          done = ImportProgress.new(file, row.import_target, row.import_target)
+        end
+        {State::Importing, done}
+      elsif on_disk
+        {State::Importing, on_disk}
+      else
+        {State::ImportPending, nil}
+      end
     end
 
     # A red, `⚠`-prefixed interior line surfacing a failed backend so an
@@ -294,10 +330,11 @@ module ArrTop
       @theme.colorize(text, @theme.status_failed)
     end
 
-    # Tallies *rows* by `State` for the header summary.
-    private def counts(rows : Array(QueueRow)) : Hash(State, Int32)
+    # Tallies effective display *states* for the header summary (so a reclassified
+    # season-pack row counts as pending/importing per what's shown).
+    private def counts(states : Array(State)) : Hash(State, Int32)
       tally = Hash(State, Int32).new(0)
-      rows.each { |row| tally[row.state] += 1 }
+      states.each { |state| tally[state] += 1 }
       tally
     end
   end

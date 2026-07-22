@@ -63,6 +63,9 @@ module ArrTop
         download_id: record.download_id,
         indexer: record.indexer,
         dest_folder: record.movie.try(&.path),
+        season_number: nil,
+        episode_number: nil,
+        episode_has_file: nil,
       )
     end
 

@@ -20,6 +20,18 @@ private def write_sized(path : String, bytes : Int64) : Nil
   File.open(path, "w", &.truncate(bytes))
 end
 
+# Builds a Season 02 folder with a partial S02E03 (currently copying), a complete
+# S02E02 (already imported), and a decoy S02E10, then yields the series root.
+private def with_season_pack(&)
+  with_tempdir do |dir|
+    season = File.join(dir, "Season 02")
+    write_sized(File.join(season, "The.Show.S02E02.mkv"), 10_000_i64) # complete
+    write_sized(File.join(season, "The.Show.S02E03.mkv"), 4_000_i64)  # partial
+    write_sized(File.join(season, "The.Show.S02E10.mkv"), 9_000_i64)  # decoy
+    yield dir
+  end
+end
+
 describe ArrTop::ImportWatch do
   describe ".progress" do
     it "returns nil when dest_folder is nil" do
@@ -127,6 +139,80 @@ describe ArrTop::ImportWatch do
         progress.file.should eq(file)
         progress.bytes.should eq(2_500_i64)
         progress.percent.should be_close(50.0, 0.01)
+      end
+    end
+
+    # Episode-aware matching for Sonarr season packs: N episodes land in ONE
+    # series folder sharing one download, so each row must watch ITS OWN file.
+    describe "episode-aware (season/episode given)" do
+      it "picks THIS episode's file and its bytes, not the folder's newest" do
+        with_season_pack do |dir|
+          progress = ArrTop::ImportWatch.progress(dir, 8_000_i64, 2, 3).as(ArrTop::ImportProgress)
+          progress.file.should end_with("The.Show.S02E03.mkv")
+          progress.bytes.should eq(4_000_i64)
+          progress.percent.should be_close(50.0, 0.01)
+        end
+      end
+
+      it "reads ~100% for a completed episode" do
+        with_season_pack do |dir|
+          progress = ArrTop::ImportWatch.progress(dir, 10_000_i64, 2, 2).as(ArrTop::ImportProgress)
+          progress.file.should end_with("The.Show.S02E02.mkv")
+          progress.percent.should be_close(100.0, 0.01)
+        end
+      end
+
+      it "returns nil for an episode with no file present" do
+        with_season_pack do |dir|
+          ArrTop::ImportWatch.progress(dir, 8_000_i64, 2, 7).should be_nil
+        end
+      end
+
+      it "tolerates zero-padding (S2E3 matches S02E03)" do
+        with_tempdir do |dir|
+          write_sized(File.join(dir, "Show.S02E03.mkv"), 4_000_i64)
+          progress = ArrTop::ImportWatch.progress(dir, 8_000_i64, 2, 3).as(ArrTop::ImportProgress)
+          progress.file.should end_with("Show.S02E03.mkv")
+        end
+      end
+
+      it "matches BOTH episodes of a multi-episode file (S02E03E04)" do
+        with_tempdir do |dir|
+          multi = File.join(dir, "The.Show.S02E03E04.mkv")
+          write_sized(multi, 5_000_i64)
+          ArrTop::ImportWatch.progress(dir, 10_000_i64, 2, 3).as(ArrTop::ImportProgress).file.should eq(multi)
+          ArrTop::ImportWatch.progress(dir, 10_000_i64, 2, 4).as(ArrTop::ImportProgress).file.should eq(multi)
+          # A non-member episode of that file must NOT match.
+          ArrTop::ImportWatch.progress(dir, 10_000_i64, 2, 5).should be_nil
+        end
+      end
+
+      it "picks the most-recent matching file on an upgrade (old full beside new partial)" do
+        with_tempdir do |dir|
+          old_full = File.join(dir, "Show.S02E03.1080p.mkv")
+          new_part = File.join(dir, "Show.S02E03.2160p.mkv")
+          write_sized(old_full, 9_000_i64)
+          write_sized(new_part, 3_000_i64)
+          now = Time.utc
+          File.touch(old_full, now - 1.hour)
+          File.touch(new_part, now)
+
+          progress = ArrTop::ImportWatch.progress(dir, 10_000_i64, 2, 3).as(ArrTop::ImportProgress)
+          progress.file.should eq(new_part)
+          progress.bytes.should eq(3_000_i64)
+        end
+      end
+
+      it "keeps legacy newest-file behaviour when season/episode are nil (movies)" do
+        with_season_pack do |dir|
+          # No season/episode => the folder-wide most-recent video file, ignoring
+          # the SxxEyy tokens entirely.
+          newest = File.join(dir, "Season 02", "The.Show.NEWEST.mkv")
+          write_sized(newest, 1_000_i64)
+          File.touch(newest, Time.utc + 1.hour)
+          progress = ArrTop::ImportWatch.progress(dir, 8_000_i64).as(ArrTop::ImportProgress)
+          progress.file.should eq(newest)
+        end
       end
     end
   end
