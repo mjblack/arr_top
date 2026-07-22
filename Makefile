@@ -25,10 +25,12 @@ deps-dev:
 
 ## Debug build (bin/arrtop), multi-threaded runtime.
 build: deps
+	@mkdir -p $(dir $(BIN))
 	$(CRYSTAL) build $(CRFLAGS) $(MAIN) -o $(BIN)
 
 ## Optimized release build.
 release: deps
+	@mkdir -p $(dir $(BIN))
 	$(CRYSTAL) build $(CRFLAGS) --release $(MAIN) -o $(BIN)
 
 ## Build then run (pass args with: make run ARGS="...").
