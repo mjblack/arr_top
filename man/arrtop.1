@@ -1,0 +1,138 @@
+.TH ARRTOP 1 "2026" "arrtop" "User Commands"
+.SH NAME
+arrtop \- top-style terminal UI for the Sonarr/Radarr download \(-> import queue
+.SH SYNOPSIS
+.B arrtop
+.RB [ \-c | \-\-config
+.IR path ]
+.RB [ \-1 | \-\-once ]
+.RB [ \-h | \-\-help ]
+.RB [ \-v | \-\-version ]
+.SH DESCRIPTION
+.B arrtop
+is a top-like, full-screen terminal view of the Sonarr/Radarr
+download-and-import pipeline. It polls the configured *arr queues on the
+.B refresh
+interval, sorts the queue so what is actively importing floats to the top, and
+draws real progress bars for both the download and the import phase.
+.PP
+Its differentiator is the import (copy) progress: the *arr API does not expose
+how far along an import copy is, so
+.B arrtop
+reads the growing destination file directly on disk and reports the copy
+percentage in real time.
+.PP
+Because only the kernel of the host writing the file reports its size as it
+grows,
+.B arrtop
+must run
+.B on the *arr host
+for the import bar to work. Run off-host, downloads and queue state still
+display, but the import percentage shows as
+.RB \(lq \(em \(rq
+for copies it cannot watch.
+.PP
+With a terminal on stdout,
+.B arrtop
+runs the live view and redraws on the
+.B refresh
+interval (default 2s) or the instant you press a key; press
+.B q
+(or Ctrl-C) to quit, and the view resizes with the terminal. When stdout is
+piped or redirected, or with
+.BR \-\-once ,
+it prints a single plain-text snapshot instead.
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " " \fIpath\fR
+Path to the config file (YAML or JSON). Takes precedence over
+.B ARR_TOP_CONFIG
+and the default search.
+.TP
+.BR \-1 ", " \-\-once
+Print a one-shot plain-text snapshot of the queue and exit; do not start the
+live view.
+.TP
+.BR \-h ", " \-\-help
+Show a usage summary and exit.
+.TP
+.BR \-v ", " \-\-version
+Show the version and exit.
+.SH CONFIGURATION
+The config file is YAML or JSON. It defines a list of
+.B backends
+under a
+.B backends
+key; each entry needs a non-blank
+.BR name ", " url ", " api_key ,
+and a
+.B type
+of
+.B sonarr
+or
+.BR radarr .
+An optional top-level
+.B refresh
+sets how often the live view redraws and accepts
+.IR <int>s ", " <int>ms ,
+or a bare integer (seconds). The file extension picks the parser:
+.IR .yaml / .yml
+parse as YAML,
+.I .json
+as JSON, anything else tries YAML then JSON. See the packaged example config at
+.IR /etc/arr_top/config.yaml.example .
+.PP
+The config path is resolved in this order:
+.IP 1. 4
+.BR \-c / \-\-config " " \fIpath\fR
+.IP 2. 4
+the
+.B ARR_TOP_CONFIG
+environment variable
+.IP 3. 4
+the first of
+.IR ./config.yaml ", " ./config.yml ", " ./config.json
+that exists
+.IP 4. 4
+the first of
+.IR /etc/arr_top/config.yaml ", " /etc/arr_top/config.yml ", " /etc/arr_top/config.json
+that exists
+.PP
+A local
+.I ./config.*
+therefore overrides a system-wide one. If none resolves,
+.B arrtop
+prints an error and exits non-zero.
+.SH FILES
+.TP
+.I ./config.yaml\fR, \fP./config.yml\fR, \fP./config.json
+Per-directory config searched first (current working directory).
+.TP
+.I /etc/arr_top/config.yaml\fR, \fP/etc/arr_top/config.yml\fR, \fP/etc/arr_top/config.json
+System-wide config searched after the current-directory defaults.
+.TP
+.I /etc/arr_top/config.yaml.example
+Example config installed by the
+.BR .deb / .rpm
+packages. Copy it to
+.I /etc/arr_top/config.yaml
+(dropping the
+.IR .example )
+to use the system-wide location. Config may also be written in JSON; only the
+YAML example is shipped.
+.SH ENVIRONMENT
+.TP
+.B ARR_TOP_CONFIG
+Path to the config file, consulted after
+.BR \-c / \-\-config
+but before the default search.
+.TP
+.B NO_COLOR
+When set, disables the color theme; output is rendered without ANSI color. Color
+is also off automatically when stdout is not a terminal.
+.SH AUTHOR
+Matthew J. Black <mjblack@gmail.com>
+.SH REPORTING BUGS
+Report bugs at <https://github.com/mjblack/arr_top/issues>.
+.SH SEE ALSO
+Project homepage: <https://github.com/mjblack/arr_top>

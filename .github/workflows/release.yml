@@ -1,0 +1,123 @@
+name: Release
+
+# Manually triggered. Runs the CI gate, then verifies the version in shard.yml
+# and src/arr_top.cr agree, builds the optimized binary, packages it as .deb and
+# .rpm (via nfpm), and creates the v<version> tag + a GitHub release with the
+# packages attached and generated notes.
+#
+# arrtop is an interactive TUI, so there is no container image — the release
+# ships native packages only.
+#
+# Dependencies (sonarr, radarr) are public GitHub shards, so no token is needed.
+# The build always goes through the Makefile so the required -Dpreview_mt flag
+# is never dropped.
+#
+# Crystal is pinned to 1.20.2: the dev dependency ameba 1.6.4 does not build on
+# newer (>1.20.x) Crystal releases.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  # --------------------------------------------------------------------------
+  # CI gate: mirrors ci.yml. The release job only runs if this passes.
+  # --------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: "1.20.2"
+
+      - name: Install dependencies (incl. development, for ameba)
+        run: make deps-dev
+
+      - name: Check formatting
+        run: make check
+
+      - name: Lint
+        run: make lint
+
+      - name: Build (-Dpreview_mt)
+        run: make build
+
+      - name: Run specs
+        run: make test
+
+  # --------------------------------------------------------------------------
+  # Release: version check → build binary → package .deb/.rpm → tag + release.
+  # Runs only after the CI gate (`test`) succeeds.
+  # --------------------------------------------------------------------------
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The version lives in two places that must always agree: `version:` in
+      # shard.yml and `ArrTop::VERSION` in src/arr_top.cr. Fail loudly on any
+      # mismatch; otherwise export it as VERSION for later steps.
+      - name: Verify version consistency
+        run: |
+          set -euo pipefail
+          shard_version="$(sed -n 's/^version:[[:space:]]*//p' shard.yml | head -n1 | tr -d '"'"'"' ')"
+          src_version="$(sed -n 's/.*VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' src/arr_top.cr | head -n1)"
+          echo "shard.yml version:   '${shard_version}'"
+          echo "ArrTop::VERSION:     '${src_version}'"
+          if [ -z "${shard_version}" ] || [ -z "${src_version}" ]; then
+            echo "::error::could not read version from shard.yml and/or src/arr_top.cr"
+            exit 1
+          fi
+          if [ "${shard_version}" != "${src_version}" ]; then
+            echo "::error::version mismatch: shard.yml=${shard_version} vs ArrTop::VERSION=${src_version}"
+            exit 1
+          fi
+          echo "VERSION=${shard_version}" >> "$GITHUB_ENV"
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: "1.20.2"
+
+      # Optimized build via the Makefile (-Dpreview_mt --release) → bin/arrtop.
+      - name: Build release binary
+        run: make release
+
+      - name: Install nfpm
+        env:
+          NFPM_VERSION: "2.43.0"
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/nfpm.deb \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_amd64.deb"
+          sudo dpkg -i /tmp/nfpm.deb
+          nfpm --version
+
+      - name: Build .deb and .rpm packages
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          nfpm package --config packaging/nfpm.yaml --packager deb --target dist/
+          nfpm package --config packaging/nfpm.yaml --packager rpm --target dist/
+          echo "Produced packages:"
+          ls -l dist/
+          # Capture the exact filenames for the release step.
+          {
+            echo "DEB_PKG=$(ls dist/*.deb)"
+            echo "RPM_PKG=$(ls dist/*.rpm)"
+          } >> "$GITHUB_ENV"
+
+      - name: Create tag and GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes \
+            "${DEB_PKG}" "${RPM_PKG}"

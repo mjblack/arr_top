@@ -4,6 +4,11 @@
 /.shards/
 *.dwarf
 
+# Native package build artifacts (nfpm).
+/dist/
+/*.deb
+/*.rpm
+
 # This is an application: shard.lock IS committed (reproducible builds).
 
 # Claude Code agent worktrees
