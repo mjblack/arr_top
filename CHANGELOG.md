@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-22
+
+### Fixed
+
+- The queue-poller fiber no longer dies on a backend error (e.g. a socket
+  error). A failed poll is caught, logged, and retried on the next refresh, so
+  updates resume once the backend recovers instead of the view freezing.
+- A stalled import copy (no bytes gained between refreshes) now reports
+  `0 B/s` instead of the header speed briefly disappearing.
+
+### Changed
+
+- The header transfer rate is labeled **Import Speed** (and the `↓` arrow
+  removed) so it isn't mistaken for the download client's (qBittorrent) download
+  rate.
+
 ## [0.3.1] - 2026-07-22
 
 ### Added
