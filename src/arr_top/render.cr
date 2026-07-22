@@ -39,7 +39,7 @@ module ArrTop
     BOX_MR = "╣"
 
     # Column header labels.
-    HEADER_LABELS = {movie: "MOVIE", torrent: "TORRENT", status: "STATUS", progress: "PROGRESS"}
+    HEADER_LABELS = {movie: "MEDIA", torrent: "TORRENT", status: "STATUS", progress: "PROGRESS"}
 
     # Human-readable status label per `State` (also used in the queue summary).
     STATE_LABELS = {
@@ -165,15 +165,21 @@ module ArrTop
     # `download_percent`) and `Importing` (from *import*'s copy percent) rows;
     # every other state (incl. `ImportPending`) leaves the progress cell blank.
     # The returned string is exactly *width* visible cells wide.
-    def self.render_row(row : QueueRow, import : ImportProgress?, theme : Theme, width : Int32) : String
+    #
+    # *display_state* is the effective state to render (label + progress); it can
+    # differ from `row.state` when the TUI reclassifies a Sonarr season-pack row
+    # (e.g. an "importing" episode with no file yet is displayed as pending). It
+    # defaults to `row.state` so callers that don't reclassify are unaffected.
+    def self.render_row(row : QueueRow, import : ImportProgress?, theme : Theme, width : Int32,
+                        display_state : State = row.state) : String
       width = 0 if width < 0
       widths = plan_columns(width)
       m, t, s, p = widths
       cells = {
         movie_cell(row, m),
         torrent_cell(row, t),
-        status_cell(row, theme, s),
-        progress_cell(row, import, theme, p),
+        status_cell(row, display_state, theme, s),
+        progress_cell(row, display_state, import, theme, p),
       }
       assemble(width, widths, cells)
     end
@@ -298,11 +304,12 @@ module ArrTop
     end
 
     # The Status cell: the human state label, padded to *w* then coloured per the
-    # theme (warning/error/`Failed` → red; else per state).
-    private def self.status_cell(row : QueueRow, theme : Theme, w : Int32) : String
+    # theme (warning/error/`Failed` → red; else per state). *state* is the
+    # effective display state (may be a reclassified `row.state`).
+    private def self.status_cell(row : QueueRow, state : State, theme : Theme, w : Int32) : String
       return "" if w <= 0
-      label = STATE_LABELS[row.state]? || "other"
-      theme.colorize(truncate(label, w).ljust(w), theme.status_code(row))
+      label = STATE_LABELS[state]? || "other"
+      theme.colorize(truncate(label, w).ljust(w), theme.status_code(row, state))
     end
 
     # A bold column-label cell padded to *w*.
@@ -313,10 +320,10 @@ module ArrTop
 
     # The Progress cell: a coloured bar + percent for `Downloading`/`Importing`,
     # or blank spaces otherwise (and when a bar can't meaningfully fit *w*).
-    # Exactly *w* visible cells wide.
-    private def self.progress_cell(row : QueueRow, import : ImportProgress?, theme : Theme, w : Int32) : String
+    # *state* is the effective display state. Exactly *w* visible cells wide.
+    private def self.progress_cell(row : QueueRow, state : State, import : ImportProgress?, theme : Theme, w : Int32) : String
       return "" if w <= 0
-      percent = progress_percent(row, import)
+      percent = progress_percent(row, state, import)
       return " " * w if percent.nil?
 
       bar_cells = w - PCT_WIDTH - 3 # brackets (2) + gap (1) + percent
@@ -333,9 +340,9 @@ module ArrTop
     # The percentage a row's progress cell should show, or `nil` when it should
     # be blank. `Importing` reads the on-disk copy percent (nil when unwatchable);
     # `Downloading` reads `download_percent`; every other state (incl.
-    # `ImportPending`) is blank.
-    private def self.progress_percent(row : QueueRow, import : ImportProgress?) : Float64?
-      case row.state
+    # `ImportPending`) is blank. Keys off the effective *state*.
+    private def self.progress_percent(row : QueueRow, state : State, import : ImportProgress?) : Float64?
+      case state
       when State::Importing
         import.try(&.percent)
       when State::Downloading

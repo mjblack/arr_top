@@ -8,6 +8,9 @@ describe ArrTop::SonarrBackend do
           "id": 42,
           "seriesId": 7,
           "episodeId": 13,
+          "seasonNumber": 2,
+          "episodeHasFile": false,
+          "episode": {"id": 13, "seasonNumber": 2, "episodeNumber": 3, "title": "The Episode"},
           "series": {"id": 7, "path": "/tv/Some Show", "title": "Some Show"},
           "title": "Some.Release.Group",
           "size": 1000.0,
@@ -28,7 +31,10 @@ describe ArrTop::SonarrBackend do
       row.backend_name.should eq("Sonarr")
       row.media_kind.should eq(:episode)
       row.title.should eq("Some.Release.Group")
-      row.media_name.should eq("Some Show")
+      row.media_name.should eq("Some Show S02E03")
+      row.season_number.should eq(2)
+      row.episode_number.should eq(3)
+      row.episode_has_file.should be_false
       row.state.should eq(ArrTop::State::Importing)
       row.warning?.should be_true
       row.size.should eq(1000_i64)
@@ -49,6 +55,9 @@ describe ArrTop::SonarrBackend do
       row = ArrTop::SonarrBackend.map_row(record, "Sonarr")
       row.state.should eq(ArrTop::State::Unknown)
       row.media_name.should be_nil
+      row.season_number.should be_nil
+      row.episode_number.should be_nil
+      row.episode_has_file.should be_nil
       row.warning?.should be_false
       row.size.should eq(0_i64)
       row.size_left.should eq(0_i64)
@@ -56,6 +65,29 @@ describe ArrTop::SonarrBackend do
       row.download_percent.should eq(0.0)
       row.dest_folder.should be_nil
       row.eta.should be_nil
+    end
+
+    it "falls back to the series title when season/episode are unknown" do
+      record = Sonarr::Model::QueueResource.from_json(
+        %({"id": 1, "title": "x", "series": {"id": 7, "title": "Some Show"}}))
+      row = ArrTop::SonarrBackend.map_row(record, "Sonarr")
+      row.media_name.should eq("Some Show")
+    end
+  end
+
+  describe ".episode_media_name" do
+    it "appends a zero-padded SxxEyy code when season and episode are known" do
+      ArrTop::SonarrBackend.episode_media_name("The Show", 2, 3).should eq("The Show S02E03")
+      ArrTop::SonarrBackend.episode_media_name("The Show", 12, 5).should eq("The Show S12E05")
+    end
+
+    it "falls back to the series title when season or episode is nil" do
+      ArrTop::SonarrBackend.episode_media_name("The Show", nil, 3).should eq("The Show")
+      ArrTop::SonarrBackend.episode_media_name("The Show", 2, nil).should eq("The Show")
+    end
+
+    it "returns nil when the series title itself is nil" do
+      ArrTop::SonarrBackend.episode_media_name(nil, 2, 3).should be_nil
     end
   end
 end

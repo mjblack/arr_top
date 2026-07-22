@@ -180,7 +180,7 @@ describe ArrTop::Render do
     it "renders the column-header row with all labels, exactly the interior width" do
       inner = ArrTop::Render.header_row(theme, 98)
       inner.size.should eq(98)
-      inner.should contain("MOVIE")
+      inner.should contain("MEDIA")
       inner.should contain("TORRENT")
       inner.should contain("STATUS")
       inner.should contain("PROGRESS")
@@ -226,6 +226,17 @@ describe ArrTop::Render do
 
     it "shows NEITHER a bar NOR a percent for an ImportPending row" do
       line = ArrTop::Render.render_row(build_row(ArrTop::State::ImportPending), nil, theme, width)
+      line.should contain("pending")
+      line.should_not contain("█")
+      line.should_not contain("%")
+    end
+
+    it "honors a display_state that differs from row.state (reclassified pending)" do
+      import = ArrTop::ImportProgress.new("/data/f.mkv", bytes: 41_i64, target: 100_i64)
+      # The row's real state is Importing (with a bar available), but the caller
+      # reclassifies it to pending: label reads pending and NO bar is drawn.
+      line = ArrTop::Render.render_row(
+        build_row(ArrTop::State::Importing), import, theme, width, ArrTop::State::ImportPending)
       line.should contain("pending")
       line.should_not contain("█")
       line.should_not contain("%")

@@ -46,6 +46,8 @@ module ArrTop
     # Pure mapping seam: turns a Sonarr queue record into a `QueueRow`.
     def self.map_row(record : Sonarr::Model::QueueResource, backend_name : String) : QueueRow
       size = to_i64(record.size)
+      season = record.season_number
+      episode = record.episode.try(&.episode_number)
       QueueRow.new(
         backend_name: backend_name,
         media_kind: :episode,
@@ -54,7 +56,7 @@ module ArrTop
         size_left: to_i64(record.sizeleft),
         import_target: size,
         title: record.title,
-        media_name: record.series.try(&.title),
+        media_name: episode_media_name(record.series.try(&.title), season, episode),
         warning: warning?(record.tracked_download_status),
         timeleft: record.timeleft,
         eta: record.estimated_completion_time,
@@ -63,7 +65,20 @@ module ArrTop
         download_id: record.download_id,
         indexer: record.indexer,
         dest_folder: record.series.try(&.path),
+        season_number: season,
+        episode_number: episode,
+        episode_has_file: record.episode_has_file,
       )
+    end
+
+    # Builds the media-column display name for an episode: the series title with
+    # an `SxxEyy` code appended when both season and episode are known (e.g.
+    # `"The Show S02E03"`). Falls back to just the series title (or `nil`) when
+    # the season/episode isn't known. Pure, so it's unit-testable.
+    def self.episode_media_name(series_title : String?, season : Int32?, episode : Int32?) : String?
+      return series_title if series_title.nil?
+      return series_title if season.nil? || episode.nil?
+      "#{series_title} S%02dE%02d" % {season, episode}
     end
 
     # True when the tracked download status signals a warning or error.
