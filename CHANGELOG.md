@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-22
+
+### Changed
+
+- **Redesigned TUI.** The full-screen view is now framed in a double-line box
+  with a header (app title, queue-counts summary, and an aggregated import
+  transfer speed), a column-label row, and a divider.
+- Columns are now **Movie · Torrent · Status · Progress**. The **Movie** column
+  shows the media name (`series.title` / `movie.title`), distinct from the
+  torrent/release title; both name columns are fixed-width and truncated.
+- Progress uses a bracketed **block bar** (`█`) — light-blue filled, light-grey
+  remainder (color-only distinction, so it renders consistently across fonts).
+  Bars show only for `downloading`/`importing`; `importPending` (backlog) shows
+  no bar or percent.
+- **Status colors**: importing = green, pending = purple, downloading = blue,
+  failed/warning = red.
+
+### Added
+
+- A configurable color `Theme` (`src/arr_top/theme.cr`) holding all colors and the
+  bar glyphs, auto-disabled under `NO_COLOR` or on a non-TTY. Exposing it via the
+  config file is planned future work; for now it uses the built-in default.
+- `QueueRow#media_name`; `ImportRateTracker#measure` exposes the copy rate (for the
+  header's aggregated transfer speed) alongside the ETA.
+
 ## [0.2.0] - 2026-07-22
 
 First tagged release. A `top`-style terminal UI for the Sonarr/Radarr
