@@ -220,8 +220,10 @@ module ArrTop
     end
 
     # The aggregated import copy speed across watchable importing rows, e.g.
-    # `↓ 45.20 MB/s`, or `""` when nothing measurable is copying. Calls
-    # `ImportRateTracker#measure` once per folder (recording this frame's sample).
+    # `Import Speed 45.20 MB/s`, or `""` when nothing measurable is copying. The
+    # "Import Speed" label is explicit so it is not mistaken for the download
+    # client's (e.g. qBittorrent) download rate. Calls `ImportRateTracker#measure`
+    # once per folder (recording this frame's sample).
     private def aggregate_speed(rows : Array(QueueRow), imports : Array(ImportProgress?)) : String
       total = 0.0
       any = false
@@ -235,7 +237,7 @@ module ArrTop
           any = true
         end
       end
-      any ? "↓ #{Render.human_bytes(total.to_i64)}/s" : ""
+      any ? "Import Speed #{Render.human_bytes(total.to_i64)}/s" : ""
     end
 
     # Fits [top, header, divider, *content, bottom] into *max_lines*, dropping the
