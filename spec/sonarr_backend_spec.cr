@@ -8,7 +8,7 @@ describe ArrTop::SonarrBackend do
           "id": 42,
           "seriesId": 7,
           "episodeId": 13,
-          "series": {"id": 7, "path": "/tv/Some Show"},
+          "series": {"id": 7, "path": "/tv/Some Show", "title": "Some Show"},
           "title": "Some.Release.Group",
           "size": 1000.0,
           "sizeleft": 250.0,
@@ -28,6 +28,7 @@ describe ArrTop::SonarrBackend do
       row.backend_name.should eq("Sonarr")
       row.media_kind.should eq(:episode)
       row.title.should eq("Some.Release.Group")
+      row.media_name.should eq("Some Show")
       row.state.should eq(ArrTop::State::Importing)
       row.warning?.should be_true
       row.size.should eq(1000_i64)
@@ -47,6 +48,7 @@ describe ArrTop::SonarrBackend do
       record = Sonarr::Model::QueueResource.from_json(%({"id": 1, "title": "x"}))
       row = ArrTop::SonarrBackend.map_row(record, "Sonarr")
       row.state.should eq(ArrTop::State::Unknown)
+      row.media_name.should be_nil
       row.warning?.should be_false
       row.size.should eq(0_i64)
       row.size_left.should eq(0_i64)

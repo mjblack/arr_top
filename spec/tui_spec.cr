@@ -10,9 +10,12 @@ private def downloading_row(title : String = "Some Show") : ArrTop::QueueRow
 end
 
 # A TUI wired to a no-backend poller (so `#errors` stays empty and no network is
-# touched); `build_frame` and `.quit?` are pure enough to test offline.
+# touched) and a disabled theme (so frames are ANSI-free and deterministic);
+# `build_frame` and `.quit?` are pure enough to test offline.
 private def build_tui : ArrTop::TUI
-  ArrTop::TUI.new(ArrTop::Poller.new([] of ArrTop::Backend), 1.second)
+  ArrTop::TUI.new(
+    ArrTop::Poller.new([] of ArrTop::Backend), 1.second,
+    theme: ArrTop::Theme.disabled)
 end
 
 # Splits a rendered frame into its visible lines (they are joined with "\r\n").
@@ -40,17 +43,21 @@ describe ArrTop::TUI do
   end
 
   describe "#build_frame" do
-    it "shows a friendly message for an empty queue, under the header" do
+    it "shows a friendly message for an empty queue, inside the box" do
       frame = build_tui.build_frame([] of ArrTop::QueueRow, {rows: 24, cols: 80})
-      frame.should contain("arrtop")
+      frame.should contain("arrtop") # in the top border
       frame.should contain("queue empty")
+      frame.should contain("╔") # double-line box top-left corner
+      frame.should contain("╝") # bottom-right corner
     end
 
-    it "renders a downloading row with its bar and percent" do
+    it "renders a downloading row with its status, bar and percent inside the box" do
       frame = build_tui.build_frame([downloading_row], {rows: 24, cols: 80})
-      frame.should contain("Downloading")
+      frame.should contain("downloading")
       frame.should contain("50.0%")
-      frame.should contain("[##########----------]")
+      frame.should contain("█")     # bar cells
+      frame.should contain("║")     # side borders
+      frame.should contain("MOVIE") # column header row
     end
 
     it "starts at cursor-home and clears to end of screen" do

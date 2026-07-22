@@ -54,6 +54,7 @@ module ArrTop
         size_left: to_i64(record.sizeleft),
         import_target: size,
         title: record.title,
+        media_name: record.series.try(&.title),
         warning: warning?(record.tracked_download_status),
         timeleft: record.timeleft,
         eta: record.estimated_completion_time,

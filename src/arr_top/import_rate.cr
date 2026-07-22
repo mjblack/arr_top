@@ -24,22 +24,39 @@ module ArrTop
       @samples = {} of String => Sample
     end
 
-    # The estimated time remaining for the copy at *dest_folder*, or `nil` when
-    # it cannot be computed yet: fewer than two samples, no measurable time or
-    # byte gain between them (a stall), the file shrank (reset), or the target is
-    # already reached. Records the latest sample on every call.
-    def eta(dest_folder : String, progress : ImportProgress) : Time::Span?
+    # Records one sample for *dest_folder* and returns both the current copy
+    # **rate** (bytes/sec) and the **ETA** from that single update — so a caller
+    # that wants both (the per-row bar's ETA *and* the header's aggregate speed)
+    # pays for only one sample per frame, not two.
+    #
+    # Both are `nil` until a second sample exists, and both reset to `nil` on a
+    # stall (no gain), a zero-time delta, or a shrunk file. The ETA is
+    # additionally `nil` once nothing remains to copy.
+    def measure(dest_folder : String, progress : ImportProgress) : {rate: Float64?, eta: Time::Span?}
       now = Time.instant
       previous = @samples[dest_folder]?
       @samples[dest_folder] = Sample.new(progress.bytes, now)
 
-      return nil if previous.nil?
+      return {rate: nil, eta: nil} if previous.nil?
 
-      ImportRateTracker.eta_from(
+      delta_bytes = progress.bytes - previous.bytes
+      delta = now - previous.at
+      rate = ImportRateTracker.rate(delta_bytes, delta)
+      eta = ImportRateTracker.eta_from(
         remaining_bytes: progress.target - progress.bytes,
-        delta_bytes: progress.bytes - previous.bytes,
-        delta: now - previous.at,
+        delta_bytes: delta_bytes,
+        delta: delta,
       )
+      {rate: rate, eta: eta}
+    end
+
+    # The estimated time remaining for the copy at *dest_folder*, or `nil` when
+    # it cannot be computed yet: fewer than two samples, no measurable time or
+    # byte gain between them (a stall), the file shrank (reset), or the target is
+    # already reached. Records the latest sample on every call. Delegates to
+    # `#measure` so it never double-samples.
+    def eta(dest_folder : String, progress : ImportProgress) : Time::Span?
+      measure(dest_folder, progress)[:eta]
     end
 
     # Pure ETA from raw deltas: `remaining_bytes ÷ rate`, or `nil` when the rate

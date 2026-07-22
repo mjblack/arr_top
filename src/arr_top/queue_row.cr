@@ -57,7 +57,13 @@ module ArrTop
     # `:episode` (Sonarr) or `:movie` (Radarr).
     getter media_kind : Symbol
 
+    # The release/torrent name (what the download client sees).
     getter title : String?
+
+    # The media's display name — the movie or series title — distinct from the
+    # release `title`. `nil` when the *arr did not embed the movie/series.
+    getter media_name : String?
+
     getter state : State
 
     # True when the *arr's `trackedDownloadStatus` signals a warning or error.
@@ -89,7 +95,8 @@ module ArrTop
 
     def initialize(@backend_name : String, @media_kind : Symbol, @state : State,
                    @size : Int64, @size_left : Int64, @import_target : Int64,
-                   @title : String? = nil, @warning : Bool = false,
+                   @title : String? = nil, @media_name : String? = nil,
+                   @warning : Bool = false,
                    @timeleft : String? = nil, @eta : Time? = nil,
                    @protocol : String? = nil, @download_client : String? = nil,
                    @download_id : String? = nil, @indexer : String? = nil,
