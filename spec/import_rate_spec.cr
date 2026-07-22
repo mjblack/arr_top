@@ -56,6 +56,39 @@ describe ArrTop::ImportRateTracker do
     end
   end
 
+  describe "#measure" do
+    it "returns nil rate and eta on the first sample (needs two)" do
+      tracker = ArrTop::ImportRateTracker.new
+      result = tracker.measure("/data", progress(100_i64))
+      result[:rate].should be_nil
+      result[:eta].should be_nil
+    end
+
+    it "exposes a positive rate and eta once two live samples exist" do
+      tracker = ArrTop::ImportRateTracker.new
+      tracker.measure("/data", progress(100_i64))
+      # The monotonic clock advances a tiny amount between calls, so a real (if
+      # large) rate/ETA is produced; only their signs are deterministic here.
+      result = tracker.measure("/data", progress(300_i64))
+      result[:rate].try(&.positive?).should be_true
+      result[:eta].try(&.positive?).should be_true
+    end
+
+    it "resets to a nil rate when the watched file shrinks" do
+      tracker = ArrTop::ImportRateTracker.new
+      tracker.measure("/data", progress(500_i64))
+      tracker.measure("/data", progress(100_i64))[:rate].should be_nil
+    end
+
+    it "records only one sample per call (#eta delegates without double-sampling)" do
+      tracker = ArrTop::ImportRateTracker.new
+      # First #eta seeds the only sample; a second call then has a prior to
+      # compare against and yields a span — proving #eta records exactly once.
+      tracker.eta("/data", progress(100_i64)).should be_nil
+      tracker.eta("/data", progress(300_i64)).try(&.positive?).should be_true
+    end
+  end
+
   describe "#eta" do
     it "returns nil on the first sample (needs two)" do
       tracker = ArrTop::ImportRateTracker.new

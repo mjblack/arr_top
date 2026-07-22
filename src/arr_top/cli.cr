@@ -190,30 +190,34 @@ module ArrTop
       argv.any? { |arg| arg == "--version" || arg == "-v" }
     end
 
-    # Width the title column is truncated to in the snapshot table.
-    TITLE_WIDTH = 50
+    # Width the movie (media name) column is truncated to in the snapshot table.
+    MOVIE_WIDTH = 24
 
-    # Prints a plain aligned table of *rows*: state, download %, import %, title,
-    # dest. The IMPORT% column shows the live copy percentage read off disk for
-    # `Importing` rows (see `ImportWatch`); it is `—` for non-importing rows and
-    # for importing rows arrtop cannot watch (off-host, or the destination file
-    # not yet created). Used for non-tty output and `--once`.
+    # Width the torrent (release title) column is truncated to in the snapshot.
+    TITLE_WIDTH = 40
+
+    # Prints a plain, ANSI-free aligned table of *rows* in the same column order
+    # as the TUI: movie (media name), torrent (release title), status, download
+    # %, import %. The IMPORT% column shows the live copy percentage read off
+    # disk for `Importing` rows (see `ImportWatch`); it is `—` for non-importing
+    # rows and for importing rows arrtop cannot watch (off-host, or the
+    # destination file not yet created). Used for non-tty output and `--once`.
     private def self.print_snapshot(rows : Array(QueueRow)) : Nil
       if rows.empty?
         puts "queue is empty"
         return
       end
 
-      printf("%-14s %6s %8s  %-*s  %s\n", "STATE", "DL%", "IMPORT%", TITLE_WIDTH, "TITLE", "DEST")
+      printf("%-*s  %-*s  %-12s %6s %8s\n",
+        MOVIE_WIDTH, "MOVIE", TITLE_WIDTH, "TORRENT", "STATUS", "DL%", "IMPORT%")
       rows.each do |row|
         printf(
-          "%-14s %5.1f%% %8s  %-*s  %s\n",
-          row.state.to_s,
+          "%-*s  %-*s  %-12s %5.1f%% %8s\n",
+          MOVIE_WIDTH, truncate(row.media_name || "—", MOVIE_WIDTH),
+          TITLE_WIDTH, truncate(row.title || "", TITLE_WIDTH),
+          Render::STATE_LABELS[row.state]? || "other",
           row.download_percent,
           import_percent(row),
-          TITLE_WIDTH,
-          truncate(row.title || "", TITLE_WIDTH),
-          row.dest_folder || "",
         )
       end
     end

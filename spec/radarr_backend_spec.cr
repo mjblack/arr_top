@@ -7,7 +7,7 @@ describe ArrTop::RadarrBackend do
         {
           "id": 99,
           "movieId": 5,
-          "movie": {"id": 5, "path": "/movies/Some Movie (2026)"},
+          "movie": {"id": 5, "path": "/movies/Some Movie (2026)", "title": "Some Movie"},
           "title": "Some.Movie.2026",
           "size": 2000.0,
           "sizeleft": 500.0,
@@ -27,6 +27,7 @@ describe ArrTop::RadarrBackend do
       row.backend_name.should eq("Radarr")
       row.media_kind.should eq(:movie)
       row.title.should eq("Some.Movie.2026")
+      row.media_name.should eq("Some Movie")
       row.state.should eq(ArrTop::State::ImportPending)
       row.warning?.should be_false
       row.size.should eq(2000_i64)
