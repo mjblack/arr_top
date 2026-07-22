@@ -7,7 +7,7 @@ require "radarr"
 # import (copy) progress the *arr API does not report, read from the destination
 # file on disk. That disk read means arrtop is meant to run **on the *arr host**.
 module ArrTop
-  VERSION = "0.3.2"
+  VERSION = "0.3.3"
 end
 
 # Components are picked up automatically — drop new files into src/arr_top/.
