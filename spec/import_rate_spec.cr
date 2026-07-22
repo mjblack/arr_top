@@ -14,8 +14,8 @@ describe ArrTop::ImportRateTracker do
       ArrTop::ImportRateTracker.rate(500_i64, Time::Span.zero).should be_nil
     end
 
-    it "is nil when no bytes gained (a stall)" do
-      ArrTop::ImportRateTracker.rate(0_i64, 5.seconds).should be_nil
+    it "is 0.0 when no bytes gained but time elapsed (a measured stall)" do
+      ArrTop::ImportRateTracker.rate(0_i64, 5.seconds).should eq(0.0)
     end
 
     it "is nil when bytes decreased (a reset)" do
@@ -72,6 +72,17 @@ describe ArrTop::ImportRateTracker do
       result = tracker.measure("/data", progress(300_i64))
       result[:rate].try(&.positive?).should be_true
       result[:eta].try(&.positive?).should be_true
+    end
+
+    it "reports a 0.0 rate (not nil) when the copy stalled between samples" do
+      # Same byte count twice => no growth, but the monotonic clock advanced, so
+      # this is a *measured stall*: rate is 0.0 (kept truthy so the header still
+      # shows `↓ 0 B/s` instead of blanking), and the ETA is nil (no divide by 0).
+      tracker = ArrTop::ImportRateTracker.new
+      tracker.measure("/data", progress(200_i64))
+      result = tracker.measure("/data", progress(200_i64))
+      result[:rate].should eq(0.0)
+      result[:eta].should be_nil
     end
 
     it "resets to a nil rate when the watched file shrinks" do

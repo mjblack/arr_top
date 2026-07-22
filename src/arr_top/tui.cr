@@ -83,22 +83,40 @@ module ArrTop
     end
 
     # Poller fiber (producer): polls every backend, publishes the snapshot on
-    # `@updates`, then sleeps `@refresh` — repeating until `@stop` is closed. Both
-    # the publish and the sleep race `@stop.receive?` so shutdown is prompt and a
+    # `@updates`, then waits `@refresh` — repeating until `@stop` is closed. Both
+    # the publish and the wait race `@stop.receive?` so shutdown is prompt and a
     # consumer that has gone away can't wedge it. `@poller.rows` blocking parks
     # only this fiber's thread (`-Dpreview_mt`).
+    #
+    # Per-iteration-retry invariant: a poll that raises is caught INSIDE the
+    # loop, logged visibly, and skipped — the fiber does NOT publish (keeping the
+    # last good frame) but STILL runs the `@stop`-vs-`timeout` wait, so it retries
+    # every backend on the next tick and never terminates on a poll error. The
+    # outer `rescue` is only a last-resort backstop for a truly unexpected exit.
     private def spawn_poller : Nil
       spawn do
         loop do
-          rows = @poller.rows
+          rows =
+            begin
+              @poller.rows
+            rescue ex
+              Log.warn { "poll failed; retrying in #{@refresh}: #{ex.message}" }
+              nil
+            end
 
-          select
-          when @stop.receive?
-            break
-          when @updates.send(rows)
-            # delivered
+          # Publish only a successful poll; a nil (failed) poll keeps the last
+          # frame on screen. The send races `@stop.receive?` so quit is immediate.
+          if rows
+            select
+            when @stop.receive?
+              break
+            when @updates.send(rows)
+              # delivered
+            end
           end
 
+          # Always wait a tick (even after a failure) so a stuck backend is
+          # retried next round and quit stays prompt.
           select
           when @stop.receive?
             break
@@ -107,7 +125,7 @@ module ArrTop
           end
         end
       rescue ex
-        Log.debug { "poller fiber stopped: #{ex.message}" }
+        Log.error { "poller fiber stopped unexpectedly: #{ex.message}" }
       end
     end
 
