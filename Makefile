@@ -9,12 +9,18 @@ BIN      = bin/arrtop
 MAIN     = src/main.cr
 CRFLAGS  = -Dpreview_mt
 
-.PHONY: all build release run deps test format check lint clean
+.PHONY: all build release run deps deps-dev test format check lint clean
 
 all: build
 
-## Install shard dependencies.
+## Install runtime shard dependencies only (no development deps like ameba).
+## `--production` skips dev deps and uses the committed shard.lock as-is
+## (frozen), so a plain build never rewrites the lockfile.
 deps:
+	shards install --production
+
+## Install all shard dependencies, including development (ameba) — for linting.
+deps-dev:
 	shards install
 
 ## Debug build (bin/arrtop), multi-threaded runtime.
@@ -41,8 +47,8 @@ format:
 check:
 	$(CRYSTAL) tool format --check
 
-## Lint with ameba (built by `shards install`).
-lint: deps
+## Lint with ameba (a development dependency, so pull dev deps).
+lint: deps-dev
 	bin/ameba
 
 ## Remove build artifacts.
