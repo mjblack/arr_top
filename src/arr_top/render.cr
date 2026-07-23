@@ -27,7 +27,7 @@ module ArrTop
     MOVIE_WIDTH   = 20
     TORRENT_WIDTH = 28
     STATUS_WIDTH  = 11 # widest label is "downloading" (11)
-    SIZE_WIDTH    = 13 # fits the combined `disk/total` pair, e.g. `1.9/2.9 GB` / `85.3/95.7 GB`
+    SIZE_WIDTH    = 16 # fits the per-side pair `NNN MB / NN.N GB`, e.g. `44 MB / 2.1 GB`; longer values truncate with `…`
 
     # Double-line box-drawing pieces (U+2550–U+2563).
     BOX_TL = "╔"
@@ -104,18 +104,29 @@ module ArrTop
 
     # Formats a row's SIZE cell. When *disk* is nil the row is not actively
     # importing, so it shows **just the size** — a single `human_bytes(total)`,
-    # e.g. `2.9 GB`. When *disk* is non-nil (an importing row) it shows a
-    # `disk/total` pair sharing *total*'s unit, with the on-disk part rendered
-    # numerically **including zero** — e.g. `0/2.9 GB` (just started),
-    # `1.9/2.9 GB` (copying), `2.9/2.9 GB` (done). Both numbers use up to one
-    # decimal with a trailing `.0` trimmed. `total <= 0` → `—`.
+    # e.g. `2.90 GB`. When *disk* is non-nil (an importing row) it shows a
+    # `disk / total` pair where **each side picks its own unit** — so a small
+    # on-disk value keeps a meaningful magnitude instead of rounding to `0` in the
+    # total's larger unit: `0 B / 2.1 GB` (just started), `44 MB / 2.1 GB`
+    # (copying), `1.5 GB / 2.1 GB`, `2.1 GB / 2.1 GB` (done). Each number uses up
+    # to one decimal with a trailing `.0` trimmed. The on-disk value is **capped
+    # at the total** so the pair never shows a numerator larger than the
+    # denominator (an import file that overshoots the per-episode *estimate*
+    # displays as full, not `2.3 / 2.1 GB`). `total <= 0` → `—`.
     def self.human_size_pair(disk : Int64?, total : Int64) : String
       return "—" if total <= 0
       return human_bytes(total) if disk.nil?
-      total_value, idx = scale_bytes(total)
-      unit = BYTE_UNITS[idx]
-      divisor = 1024.0 ** idx
-      "#{trim_decimal(disk.to_f / divisor)}/#{trim_decimal(total_value)} #{unit}"
+      capped = {disk, total}.min
+      "#{sized(capped)} / #{sized(total)}"
+    end
+
+    # A single byte count formatted with **its own** base-1024 unit and up to one
+    # trimmed decimal, e.g. `0 B`, `44 MB`, `2.1 GB`. Non-positive → `0 B`. Used
+    # for each side of `human_size_pair` so the two numbers pick units
+    # independently.
+    private def self.sized(n : Int64) : String
+      value, idx = scale_bytes(n)
+      "#{trim_decimal(value)} #{BYTE_UNITS[idx]}"
     end
 
     # Renders *value* with one decimal place, dropping a trailing `.0` so whole
@@ -202,8 +213,8 @@ module ArrTop
     # Size · Progress. Movie is `media_name` (`—` when nil), Torrent is the release
     # `title`; both are truncated to their fixed widths. Status is the coloured
     # state label. Size is right-aligned via `human_size_pair`: an actively
-    # importing row (`disk_bytes` non-nil, the copied bytes) shows the `disk/total`
-    # pair (e.g. `0/2.9 GB` … `2.9/2.9 GB`); every other row (`disk_bytes` nil)
+    # importing row (`disk_bytes` non-nil, the copied bytes) shows the `disk / total`
+    # pair (e.g. `0 B / 2.1 GB` … `2.1 GB / 2.1 GB`); every other row (`disk_bytes` nil)
     # shows just the size `size_bytes` (e.g. `2.9 GB`). Progress is a
     # bar+percent — **only** for `Downloading` (from `download_percent`) and
     # `Importing` (from *import*'s copy percent) rows; every other state (incl.

@@ -98,6 +98,33 @@ describe ArrTop::ImportRateTracker do
       tracker.eta("/data", progress(100_i64)).should be_nil
       tracker.eta("/data", progress(300_i64)).try(&.positive?).should be_true
     end
+
+    # Regression for the "118 GB/s" bug: a Sonarr season pack puts every episode
+    # in ONE folder, so folder-keying compared different episodes' byte counts
+    # frame-to-frame and manufactured an astronomical rate. Keying by FILE gives
+    # each episode its own history.
+    it "keys by the file, so two different pack files measured back-to-back don't cross-contaminate" do
+      tracker = ArrTop::ImportRateTracker.new
+      gb = 1024_i64 * 1024 * 1024
+      # Same folder, DIFFERENT files/bytes, one frame — ascending bytes so a folder
+      # key WOULD have produced a huge bogus positive rate on the second call.
+      e01 = ArrTop::ImportProgress.new("/tv/Show/S01E01.mkv", 1_i64 * gb, 6_i64 * gb)
+      e02 = ArrTop::ImportProgress.new("/tv/Show/S01E02.mkv", 5_i64 * gb, 6_i64 * gb)
+      # Each is the FIRST sample for its own key ⇒ both nil (no bogus rate).
+      tracker.measure(e01.file, e01)[:rate].should be_nil
+      tracker.measure(e02.file, e02)[:rate].should be_nil
+    end
+
+    it "still yields a real positive rate for a single file sampled twice as it grows" do
+      tracker = ArrTop::ImportRateTracker.new
+      gb = 1024_i64 * 1024 * 1024
+      f = "/tv/Show/S01E02.mkv"
+      tracker.measure(f, ArrTop::ImportProgress.new(f, 1_i64 * gb, 6_i64 * gb))[:rate].should be_nil
+      # Second sample of the SAME file with more bytes ⇒ a positive (growing) rate.
+      # (The exact bytes/sec math is covered deterministically by the .rate specs.)
+      result = tracker.measure(f, ArrTop::ImportProgress.new(f, 2_i64 * gb, 6_i64 * gb))
+      result[:rate].try(&.positive?).should be_true
+    end
   end
 
   describe "#eta" do

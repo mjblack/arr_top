@@ -82,26 +82,38 @@ describe ArrTop::Render do
 
   describe ".human_size_pair" do
     gb = 1024_i64 * 1024 * 1024
+    mb = 1024_i64 * 1024
 
-    it "renders both numbers in the total's unit, trimming trailing .0" do
-      # 12 GB on disk of 30 GB → whole numbers, no decimals, shared GB unit.
-      ArrTop::Render.human_size_pair(12_i64 * gb, 30_i64 * gb).should eq("12/30 GB")
+    it "renders each side in its own unit, trimming trailing .0" do
+      # 12 GB on disk of 30 GB → whole numbers, no decimals, each side its own unit.
+      ArrTop::Render.human_size_pair(12_i64 * gb, 30_i64 * gb).should eq("12 GB / 30 GB")
     end
 
     it "keeps one decimal for fractional values" do
-      disk = (1.9 * gb).to_i64
-      total = (2.9 * gb).to_i64
-      ArrTop::Render.human_size_pair(disk, total).should eq("1.9/2.9 GB")
+      disk = (1.5 * gb).to_i64
+      total = (2.1 * gb).to_i64
+      ArrTop::Render.human_size_pair(disk, total).should eq("1.5 GB / 2.1 GB")
     end
 
-    it "shows a numeric zero on-disk part (never a dash) for a just-started import" do
-      ArrTop::Render.human_size_pair(0_i64, (2.9 * gb).to_i64).should eq("0/2.9 GB")
+    it "shows a small on-disk value in its OWN unit, never a misleading 0" do
+      # 44 MB copied of a 2.1 GB estimate: with a shared GB unit this rounded to
+      # `0`; per-side units keep it a meaningful `44 MB`.
+      ArrTop::Render.human_size_pair(44_i64 * mb, (2.1 * gb).to_i64).should eq("44 MB / 2.1 GB")
     end
 
-    it "uses the total's unit for the disk number too (shared unit)" do
-      # disk is 512 MB, total is 2 GB → disk shown as a fraction of a GB (0.5),
-      # NOT switched to its own MB unit.
-      ArrTop::Render.human_size_pair(512_i64 * 1024 * 1024, 2_i64 * gb).should eq("0.5/2 GB")
+    it "shows a zero on-disk part as 0 B (just-started import)" do
+      ArrTop::Render.human_size_pair(0_i64, (2.1 * gb).to_i64).should eq("0 B / 2.1 GB")
+    end
+
+    it "picks the disk side's own unit (512 MB stays MB, not a fraction of GB)" do
+      ArrTop::Render.human_size_pair(512_i64 * mb, 2_i64 * gb).should eq("512 MB / 2 GB")
+    end
+
+    it "caps the on-disk value at the total (numerator never exceeds denominator)" do
+      # A file that overshoots the per-episode estimate (2.3 GB on disk of a 2.1 GB
+      # estimate) must display as full, not `2.3 GB / 2.1 GB`.
+      total = (2.1 * gb).to_i64
+      ArrTop::Render.human_size_pair((2.3 * gb).to_i64, total).should eq("2.1 GB / 2.1 GB")
     end
 
     it "shows just the size (single value) when disk is nil (not importing)" do
@@ -256,12 +268,12 @@ describe ArrTop::Render do
     end
 
     it "shows the combined disk/total size pair for an importing row (disk non-nil)" do
-      # 1.9 GB on disk of a 2.9 GB target → `1.9/2.9 GB`, right-aligned in SIZE.
+      # 1.9 GB on disk of a 2.9 GB target → `1.9 GB / 2.9 GB`, right-aligned in SIZE.
       disk = (1.9 * gb).to_i64
       total = (2.9 * gb).to_i64
       line = ArrTop::Render.render_row(
         build_row(ArrTop::State::Importing), nil, disk, total, theme, width)
-      line.should contain("1.9/2.9 GB")
+      line.should contain("1.9 GB / 2.9 GB")
       line.size.should eq(width)
     end
 

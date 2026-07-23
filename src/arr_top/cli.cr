@@ -218,9 +218,9 @@ module ArrTop
     # Width the torrent (release title) column is truncated to in the snapshot.
     TITLE_WIDTH = 40
 
-    # Width the SIZE column (the combined `disk/total` pair) is right-aligned to in
-    # the snapshot, e.g. `1.9/2.9 GB` / `85.3/95.7 GB`.
-    SIZE_WIDTH = 13
+    # Width the SIZE column (the per-side `disk / total` pair) is right-aligned to
+    # in the snapshot, e.g. `44 MB / 2.1 GB` / `1.5 GB / 2.1 GB`.
+    SIZE_WIDTH = 16
 
     # Prints a plain, ANSI-free aligned table of *rows* in the same column order
     # as the TUI: media name, torrent (release title), status, size, download %,
@@ -229,7 +229,7 @@ module ArrTop
     # `disk_bytes`), so a season pack renders identically here: already-copied
     # episodes read `100.0%`, the one actively copying reads its estimated %,
     # not-yet-started episodes show `pending` with `—`, and SIZE shows the
-    # `on-disk/total` pair in one unit for an actively importing row (per-episode
+    # per-side `on-disk / total` pair for an actively importing row (per-episode
     # estimate, not the repeated pack total) but just the size for every other
     # row. The IMPORT% cell is `—` for non-importing rows and for importing rows
     # arrtop cannot watch (off-host / destination file not yet created). Used for
@@ -245,7 +245,10 @@ module ArrTop
 
       puts snapshot_header
       rows.each do |row|
-        state, progress = TUI.resolve_display(row, group_counts)
+        state, progress, prune = TUI.resolve_display(row, group_counts)
+        # Completed pack episodes are pruned (same flag the TUI uses), so a season
+        # pack shows only the actively-copying episode and the pending ones.
+        next if prune
         total = TUI.effective_target(row, group_counts)
         disk = TUI.disk_bytes(row, state, progress, total)
         puts snapshot_row(row, state, disk, total, progress)

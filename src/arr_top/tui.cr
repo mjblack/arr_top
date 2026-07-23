@@ -192,19 +192,33 @@ module ArrTop
       # (there is no per-episode size in the API), so split it across the pack's
       # episodes — the rows sharing this row's `download_id` — to get a realistic
       # per-episode target (see `TUI.effective_target`).
+      #
+      # Completed pack episodes are then *pruned* (see `prune_completed?`): a done
+      # episode's copy has finished and Sonarr has moved on, so it drops out of the
+      # view, leaving only the actively-copying episode and the pending ones. The
+      # group counts stay computed over the FULL row set so the per-episode target
+      # split is unaffected by pruning; only what's rendered (and the header
+      # summary counts) reflects the surviving rows.
       group_counts = TUI.download_group_counts(rows)
-      decisions = rows.map { |row| TUI.resolve_display(row, group_counts) }
-      states = decisions.map { |decision| decision[0] }
-      imports = decisions.map { |decision| decision[1] }
-      sizes = rows.map { |row| TUI.effective_target(row, group_counts) }
-      disks = rows.map_with_index { |row, i| TUI.disk_bytes(row, states[i], imports[i], sizes[i]) }
-      speed = aggregate_speed(rows, imports)
+      kept_rows = [] of QueueRow
+      states = [] of State
+      imports = [] of ImportProgress?
+      rows.each do |row|
+        state, import, prune = TUI.resolve_display(row, group_counts)
+        next if prune
+        kept_rows << row
+        states << state
+        imports << import
+      end
+      sizes = kept_rows.map { |row| TUI.effective_target(row, group_counts) }
+      disks = kept_rows.map_with_index { |row, i| TUI.disk_bytes(row, states[i], imports[i], sizes[i]) }
+      speed = aggregate_speed(imports)
 
       top = Render.top_border(cols, counts(states), speed, @theme)
       bottom = Render.bottom_border(cols, @theme)
       header = Render.wrap(Render.header_row(@theme, interior), cols, @theme)
       divider = Render.divider(cols, @theme)
-      content = content_lines(rows, states, imports, disks, sizes, cols, interior)
+      content = content_lines(kept_rows, states, imports, disks, sizes, cols, interior)
 
       frame_string(layout(max_lines, top, header, divider, content, bottom))
     end
@@ -237,16 +251,15 @@ module ArrTop
     # `Import Speed 45.20 MB/s`, or `""` when nothing measurable is copying. The
     # "Import Speed" label is explicit so it is not mistaken for the download
     # client's (e.g. qBittorrent) download rate. Calls `ImportRateTracker#measure`
-    # once per folder (recording this frame's sample).
-    private def aggregate_speed(rows : Array(QueueRow), imports : Array(ImportProgress?)) : String
+    # once per copied **file** — keyed by `ImportProgress#file`, not the folder,
+    # so a season pack's many episodes in one folder each get their own sample
+    # history and a completed/other episode can't manufacture a bogus rate.
+    private def aggregate_speed(imports : Array(ImportProgress?)) : String
       total = 0.0
       any = false
-      rows.each_with_index do |row, i|
-        ip = imports[i]
+      imports.each do |ip|
         next if ip.nil?
-        folder = row.dest_folder
-        next if folder.nil?
-        if rate = @rates.measure(folder, ip)[:rate]
+        if rate = @rates.measure(ip.file, ip)[:rate]
           total += rate
           any = true
         end
@@ -297,12 +310,36 @@ module ArrTop
     # `effective_target` (split a season pack's total across its episodes) →
     # `watch_progress` (read this episode's file + whether it's the active copy) →
     # `display_state_and_progress` (reclassify done/active/pending) — and returns
-    # the effective `{State, ImportProgress?}` to render.
+    # `{State, ImportProgress?, prune}`: the effective state + progress to render,
+    # plus whether this is a *completed* pack episode that should be **pruned**
+    # from the view (see `prune_completed?`). Both the TUI (`build_frame`) and the
+    # snapshot (`CLI.print_snapshot`) key off this single `prune` flag so the two
+    # agree on what a season pack shows.
     def self.resolve_display(row : QueueRow,
-                             group_counts : Hash(String, Int32)) : {State, ImportProgress?}
+                             group_counts : Hash(String, Int32)) : {State, ImportProgress?, Bool}
       target = effective_target(row, group_counts)
       on_disk, active = watch_progress(row, target)
-      display_state_and_progress(row, on_disk, active, target)
+      state, progress = display_state_and_progress(row, on_disk, active, target)
+      {state, progress, prune_completed?(row, on_disk, active)}
+    end
+
+    # Whether *row* is a **completed** season-pack episode that should be dropped
+    # from the view, so a pack shows only the actively-copying episode plus the
+    # not-yet-started (pending) ones. Pure, so it's unit-tested directly.
+    #
+    # Keys off the *raw* on-disk watch (`on_disk`/`active` from `watch_progress`),
+    # not the reclassified display state. Only a Sonarr **episode** row the *arr
+    # still reports as `Importing` can prune; a row prunes when either:
+    # - its file is present but is **not** the folder's active (newest-mtime) copy
+    #   — its copy finished and Sonarr has moved on to the next episode — or
+    # - `episode_has_file` is true (Sonarr already imported it; a filename-match
+    #   fallback for when the on-disk file can't be located).
+    # The actively-copying episode (present **and** active) is kept even when its
+    # on-disk bytes overshoot the per-episode estimate; pending episodes (no file,
+    # not yet imported), movies, and every non-importing row are kept.
+    def self.prune_completed?(row : QueueRow, on_disk : ImportProgress?, active : Bool) : Bool
+      return false unless row.media_kind == :episode && row.state == State::Importing
+      (!on_disk.nil? && !active) || row.episode_has_file == true
     end
 
     # Live import (copy) progress for an `Importing` row that arrtop can watch on
