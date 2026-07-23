@@ -193,11 +193,7 @@ module ArrTop
       # episodes — the rows sharing this row's `download_id` — to get a realistic
       # per-episode target (see `TUI.effective_target`).
       group_counts = TUI.download_group_counts(rows)
-      decisions = rows.map do |row|
-        target = TUI.effective_target(row, group_counts)
-        watch = import_progress(row, target)
-        TUI.display_state_and_progress(row, watch[0], watch[1], target)
-      end
+      decisions = rows.map { |row| TUI.resolve_display(row, group_counts) }
       states = decisions.map { |decision| decision[0] }
       imports = decisions.map { |decision| decision[1] }
       speed = aggregate_speed(rows, imports)
@@ -291,6 +287,21 @@ module ArrTop
       end
     end
 
+    # The single source of truth for a row's effective display, shared by the live
+    # TUI (`build_frame`) and the plain-text snapshot (`CLI.print_snapshot`) so the
+    # two never disagree. Given a row and the queue's `download_id` → count map
+    # (from `download_group_counts`), it chains the per-episode pipeline —
+    # `effective_target` (split a season pack's total across its episodes) →
+    # `watch_progress` (read this episode's file + whether it's the active copy) →
+    # `display_state_and_progress` (reclassify done/active/pending) — and returns
+    # the effective `{State, ImportProgress?}` to render.
+    def self.resolve_display(row : QueueRow,
+                             group_counts : Hash(String, Int32)) : {State, ImportProgress?}
+      target = effective_target(row, group_counts)
+      on_disk, active = watch_progress(row, target)
+      display_state_and_progress(row, on_disk, active, target)
+    end
+
     # Live import (copy) progress for an `Importing` row that arrtop can watch on
     # disk, paired with whether the matched file is the folder's **active**
     # (newest-mtime) copy. Returns `{nil, false}` for every non-importing row and
@@ -300,7 +311,7 @@ module ArrTop
     # as the bar's denominator. Episode rows use the season/episode-aware watch so
     # each row watches THIS episode's file out of a season pack (and learns
     # whether it is the one being copied); movies use the folder-wide newest file.
-    private def import_progress(row : QueueRow, target : Int64) : {ImportProgress?, Bool}
+    def self.watch_progress(row : QueueRow, target : Int64) : {ImportProgress?, Bool}
       return {nil, false} unless row.state == State::Importing
       folder = row.dest_folder
       return {nil, false} if folder.nil?
