@@ -173,4 +173,45 @@ describe ArrTop::CLI do
       ArrTop::CLI.import_cell(active).should eq("20.0%")
     end
   end
+
+  describe ".snapshot_header" do
+    it "includes a SIZE column between STATUS and DL%" do
+      header = ArrTop::CLI.snapshot_header
+      header.should contain("STATUS")
+      header.should contain("SIZE")
+      header.should contain("DL%")
+      header.should contain("IMPORT%")
+      # SIZE sits after STATUS and before DL%.
+      header.index!("SIZE").should be > header.index!("STATUS")
+      header.index!("SIZE").should be < header.index!("DL%")
+    end
+  end
+
+  describe ".snapshot_row" do
+    gb = 1024_i64 * 1024 * 1024
+
+    private_row = ->(state : ArrTop::State, size : Int64, size_left : Int64) do
+      ArrTop::QueueRow.new(
+        backend_name: "b", media_kind: :episode, state: state,
+        size: size, size_left: size_left, import_target: size,
+        title: "Some.Release", media_name: "Show S01E01", dest_folder: "/tv",
+      )
+    end
+
+    it "renders the combined on-disk/total size pair, ANSI-free" do
+      row = private_row.call(ArrTop::State::Importing, 2_i64 * gb, 0_i64)
+      import = ArrTop::ImportProgress.new("/tv/E01.mkv", (1.2 * gb).to_i64, 2_i64 * gb)
+      line = ArrTop::CLI.snapshot_row(row, ArrTop::State::Importing, (1.2 * gb).to_i64, 2_i64 * gb, import)
+      line.should contain("1.2/2 GB")
+      line.should contain("Show S01E01")
+      line.should_not contain("\e[") # no ANSI escapes
+    end
+
+    it "shows —/total for a pending row with nothing on disk" do
+      row = private_row.call(ArrTop::State::ImportPending, 3_i64 * gb, 3_i64 * gb)
+      line = ArrTop::CLI.snapshot_row(row, ArrTop::State::ImportPending, nil, 3_i64 * gb, nil)
+      line.should contain("—/3 GB")
+      line.should contain("pending")
+    end
+  end
 end

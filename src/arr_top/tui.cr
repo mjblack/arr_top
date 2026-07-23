@@ -196,13 +196,15 @@ module ArrTop
       decisions = rows.map { |row| TUI.resolve_display(row, group_counts) }
       states = decisions.map { |decision| decision[0] }
       imports = decisions.map { |decision| decision[1] }
+      sizes = rows.map { |row| TUI.effective_target(row, group_counts) }
+      disks = rows.map_with_index { |row, i| TUI.disk_bytes(row, states[i], imports[i], sizes[i]) }
       speed = aggregate_speed(rows, imports)
 
       top = Render.top_border(cols, counts(states), speed, @theme)
       bottom = Render.bottom_border(cols, @theme)
       header = Render.wrap(Render.header_row(@theme, interior), cols, @theme)
       divider = Render.divider(cols, @theme)
-      content = content_lines(rows, states, imports, cols, interior)
+      content = content_lines(rows, states, imports, disks, sizes, cols, interior)
 
       frame_string(layout(max_lines, top, header, divider, content, bottom))
     end
@@ -212,6 +214,7 @@ module ArrTop
     # wide (interior padded to *interior*, wrapped in the side borders).
     private def content_lines(rows : Array(QueueRow), states : Array(State),
                               imports : Array(ImportProgress?),
+                              disks : Array(Int64?), sizes : Array(Int64),
                               cols : Int32, interior : Int32) : Array(String)
       lines = [] of String
       @poller.errors.each do |name, message|
@@ -223,7 +226,7 @@ module ArrTop
         lines << Render.wrap(empty, cols, @theme)
       else
         rows.each_with_index do |row, i|
-          line = Render.render_row(row, imports[i], @theme, interior, states[i])
+          line = Render.render_row(row, imports[i], disks[i], sizes[i], @theme, interior, states[i])
           lines << Render.wrap(line, cols, @theme)
         end
       end
@@ -349,6 +352,19 @@ module ArrTop
       return row.import_target if id.nil?
       count = group_counts[id]? || 1
       count > 1 ? row.import_target // count : row.import_target
+    end
+
+    # The bytes currently on disk behind a row's displayed progress bar — the
+    # numerator of the SIZE column's `disk/total` pair — or `nil` when there is
+    # nothing to show. Importing/done rows use the resolved copy *progress*'s real
+    # bytes (equal to *total* for a finished episode); a `Downloading` row scales
+    # its downloaded fraction onto the effective per-episode *total* (so DISK
+    # tracks the download bar and the per-episode SIZE, not the whole-pack size);
+    # pending/queued rows and any row without progress are `nil`. Pure/unit-testable.
+    def self.disk_bytes(row : QueueRow, state : State, progress : ImportProgress?, total : Int64) : Int64?
+      return progress.bytes if progress
+      return nil unless state == State::Downloading && row.size > 0
+      ((row.size - row.size_left).to_f / row.size * total).to_i64
     end
 
     # Pure reclassification: given a row, the import progress found on disk for it,

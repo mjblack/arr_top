@@ -218,15 +218,21 @@ module ArrTop
     # Width the torrent (release title) column is truncated to in the snapshot.
     TITLE_WIDTH = 40
 
+    # Width the SIZE column (the combined `disk/total` pair) is right-aligned to in
+    # the snapshot, e.g. `1.9/2.9 GB` / `85.3/95.7 GB`.
+    SIZE_WIDTH = 13
+
     # Prints a plain, ANSI-free aligned table of *rows* in the same column order
-    # as the TUI: media name, torrent (release title), status, download %, import
-    # %. STATUS and IMPORT% come from the SAME per-episode reclassification the
-    # TUI uses (`TUI.resolve_display`), so a season pack renders identically here:
-    # already-copied episodes read `100.0%`, the one actively copying reads its
-    # estimated %, and not-yet-started episodes show `pending` with `—`. The
-    # IMPORT% cell is `—` for non-importing rows and for importing rows arrtop
-    # cannot watch (off-host / destination file not yet created). Used for non-tty
-    # output and `--once`.
+    # as the TUI: media name, torrent (release title), status, size, download %,
+    # import %. STATUS, SIZE and IMPORT% come from the SAME per-episode
+    # reclassification the TUI uses (`TUI.resolve_display` / `effective_target` /
+    # `disk_bytes`), so a season pack renders identically here: already-copied
+    # episodes read `100.0%`, the one actively copying reads its estimated %,
+    # not-yet-started episodes show `pending` with `—`, and SIZE shows a combined
+    # `on-disk/total` pair in one unit (per-episode estimate, not the repeated pack
+    # total). The IMPORT% cell is `—` for non-importing rows and for importing rows
+    # arrtop cannot watch (off-host / destination file not yet created). Used for
+    # non-tty output and `--once`.
     private def self.print_snapshot(rows : Array(QueueRow)) : Nil
       if rows.empty?
         puts "queue is empty"
@@ -236,19 +242,38 @@ module ArrTop
       # One shared count map (download_id → episodes in the pack), same as the TUI.
       group_counts = TUI.download_group_counts(rows)
 
-      printf("%-*s  %-*s  %-12s %6s %8s\n",
-        MEDIA_WIDTH, "MEDIA", TITLE_WIDTH, "TORRENT", "STATUS", "DL%", "IMPORT%")
+      puts snapshot_header
       rows.each do |row|
         state, progress = TUI.resolve_display(row, group_counts)
-        printf(
-          "%-*s  %-*s  %-12s %5.1f%% %8s\n",
-          MEDIA_WIDTH, truncate(row.media_name || "—", MEDIA_WIDTH),
-          TITLE_WIDTH, truncate(row.title || "", TITLE_WIDTH),
-          Render::STATE_LABELS[state]? || "other",
-          row.download_percent,
-          import_cell(progress),
-        )
+        total = TUI.effective_target(row, group_counts)
+        disk = TUI.disk_bytes(row, state, progress, total)
+        puts snapshot_row(row, state, disk, total, progress)
       end
+    end
+
+    # The plain-text snapshot header line: the column labels aligned to the same
+    # columns as `snapshot_row`. Pure/ANSI-free, so it's unit-testable.
+    def self.snapshot_header : String
+      "%-*s  %-*s  %-12s %*s %6s %8s" % {
+        MEDIA_WIDTH, "MEDIA", TITLE_WIDTH, "TORRENT", "STATUS",
+        SIZE_WIDTH, "SIZE", "DL%", "IMPORT%",
+      }
+    end
+
+    # One plain-text snapshot data line for *row* at effective display *state*, the
+    # combined `disk/total` size pair, and resolved import *progress*: media ·
+    # torrent · status · size (right-aligned `human_size_pair`) · DL% · IMPORT%.
+    # Pure and ANSI-free, so it's unit-testable and safe for a piped/`--once` stdout.
+    def self.snapshot_row(row : QueueRow, state : State, disk : Int64?, total : Int64,
+                          progress : ImportProgress?) : String
+      "%-*s  %-*s  %-12s %*s %5.1f%% %8s" % {
+        MEDIA_WIDTH, truncate(row.media_name || "—", MEDIA_WIDTH),
+        TITLE_WIDTH, truncate(row.title || "", TITLE_WIDTH),
+        Render::STATE_LABELS[state]? || "other",
+        SIZE_WIDTH, Render.human_size_pair(disk, total),
+        row.download_percent,
+        import_cell(progress),
+      }
     end
 
     # The IMPORT% cell for a resolved display *progress*: the copy percentage
