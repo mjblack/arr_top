@@ -8,9 +8,14 @@ module ArrTop
   # ETA is derived here from arrtop's own successive disk readings: bytes gained
   # ÷ wall time between samples = bytes/sec, and `remaining ÷ rate` = the ETA.
   #
-  # State is keyed by `dest_folder` (one copy in flight per destination). It
-  # returns `nil` until it has two samples, and resets (nil) when the watched
-  # file shrinks — a new/replaced file — so a stale rate is never shown.
+  # State is keyed by an opaque per-copy *key* — the destination **file path**
+  # (`ImportProgress#file`), NOT the folder. A Sonarr season pack lands every
+  # episode in ONE folder, so a folder key would compare *different* episodes'
+  # byte counts frame-to-frame and manufacture an astronomical bogus rate; keying
+  # by file gives each episode its own sample history, so only a genuinely
+  # growing file yields a positive rate. It returns `nil` until it has two
+  # samples for a key, and resets (nil) when the watched file shrinks — a
+  # new/replaced file — so a stale rate is never shown.
   #
   # Timing uses `Time.instant` (a monotonic clock that never jumps backward). The
   # instant-based bookkeeping stays inside `#eta`; the actual math lives in the
@@ -24,20 +29,20 @@ module ArrTop
       @samples = {} of String => Sample
     end
 
-    # Records one sample for *dest_folder* and returns both the current copy
-    # **rate** (bytes/sec) and the **ETA** from that single update — so a caller
-    # that wants both (the per-row bar's ETA *and* the header's aggregate speed)
-    # pays for only one sample per frame, not two.
+    # Records one sample under *key* (the copy's destination file path) and
+    # returns both the current copy **rate** (bytes/sec) and the **ETA** from that
+    # single update — so a caller that wants both (the per-row bar's ETA *and* the
+    # header's aggregate speed) pays for only one sample per frame, not two.
     #
-    # Both are `nil` until a second sample exists, and both reset to `nil` on a
-    # zero-time delta or a shrunk file. A no-growth interval is a *measured
-    # stall*: the **rate** reports `0.0` (a copy that isn't advancing, not
-    # "unknown"), while the **eta** stays `nil` (nothing divides by a 0 rate).
+    # Both are `nil` until a second sample exists **for that key**, and both reset
+    # to `nil` on a zero-time delta or a shrunk file. A no-growth interval is a
+    # *measured stall*: the **rate** reports `0.0` (a copy that isn't advancing,
+    # not "unknown"), while the **eta** stays `nil` (nothing divides by a 0 rate).
     # The ETA is additionally `nil` once nothing remains to copy.
-    def measure(dest_folder : String, progress : ImportProgress) : {rate: Float64?, eta: Time::Span?}
+    def measure(key : String, progress : ImportProgress) : {rate: Float64?, eta: Time::Span?}
       now = Time.instant
-      previous = @samples[dest_folder]?
-      @samples[dest_folder] = Sample.new(progress.bytes, now)
+      previous = @samples[key]?
+      @samples[key] = Sample.new(progress.bytes, now)
 
       return {rate: nil, eta: nil} if previous.nil?
 
@@ -52,13 +57,13 @@ module ArrTop
       {rate: rate, eta: eta}
     end
 
-    # The estimated time remaining for the copy at *dest_folder*, or `nil` when
-    # it cannot be computed yet: fewer than two samples, no measurable time or
-    # byte gain between them (a stall), the file shrank (reset), or the target is
-    # already reached. Records the latest sample on every call. Delegates to
-    # `#measure` so it never double-samples.
-    def eta(dest_folder : String, progress : ImportProgress) : Time::Span?
-      measure(dest_folder, progress)[:eta]
+    # The estimated time remaining for the copy under *key* (its destination file
+    # path), or `nil` when it cannot be computed yet: fewer than two samples, no
+    # measurable time or byte gain between them (a stall), the file shrank
+    # (reset), or the target is already reached. Records the latest sample on
+    # every call. Delegates to `#measure` so it never double-samples.
+    def eta(key : String, progress : ImportProgress) : Time::Span?
+      measure(key, progress)[:eta]
     end
 
     # Pure ETA from raw deltas: `remaining_bytes ÷ rate`, or `nil` when the rate

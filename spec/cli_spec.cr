@@ -202,7 +202,7 @@ describe ArrTop::CLI do
       row = private_row.call(ArrTop::State::Importing, 2_i64 * gb, 0_i64)
       import = ArrTop::ImportProgress.new("/tv/E01.mkv", (1.2 * gb).to_i64, 2_i64 * gb)
       line = ArrTop::CLI.snapshot_row(row, ArrTop::State::Importing, (1.2 * gb).to_i64, 2_i64 * gb, import)
-      line.should contain("1.2/2 GB")
+      line.should contain("1.2 GB / 2 GB")
       line.should contain("Show S01E01")
       line.should_not contain("\e[") # no ANSI escapes
     end

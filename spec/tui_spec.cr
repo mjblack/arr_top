@@ -1,4 +1,35 @@
 require "./spec_helper"
+require "file_utils"
+
+# Runs the block with a throwaway temp directory, cleaned up afterwards.
+private def with_tempdir(&)
+  dir = File.tempname("arrtop-tui")
+  Dir.mkdir_p(dir)
+  begin
+    yield dir
+  ensure
+    FileUtils.rm_rf(dir)
+  end
+end
+
+# Creates a file at *path* of exactly *bytes* bytes (sparse via truncate), making
+# parent dirs as needed.
+private def write_sized(path : String, bytes : Int64) : Nil
+  Dir.mkdir_p(File.dirname(path))
+  File.open(path, "w", &.truncate(bytes))
+end
+
+# An importing episode row of the shared "pack" download, for the prune tests.
+private def pack_episode_row(episode : Int32, folder : String) : ArrTop::QueueRow
+  ArrTop::QueueRow.new(
+    backend_name: "b", media_kind: :episode, state: ArrTop::State::Importing,
+    size: 6_i64 * 1024 * 1024 * 1024, size_left: 0_i64,
+    import_target: 6_i64 * 1024 * 1024 * 1024,
+    title: "The.Show.S01E0#{episode}", media_name: "Show S01E0#{episode}",
+    dest_folder: folder, season_number: 1, episode_number: episode,
+    episode_has_file: false, download_id: "pack",
+  )
+end
 
 # A downloading QueueRow with a known percent (size 1000, size_left 500 => 50%).
 private def downloading_row(title : String = "Some Show") : ArrTop::QueueRow
@@ -193,6 +224,43 @@ describe ArrTop::TUI do
     end
   end
 
+  describe ".prune_completed?" do
+    gb = 1024_i64 * 1024 * 1024
+
+    it "prunes a present-but-not-active episode (its copy finished, Sonarr moved on)" do
+      done = ArrTop::ImportProgress.new("/tv/E01.mkv", 2_i64 * gb, 2_i64 * gb)
+      ArrTop::TUI.prune_completed?(episode_row(episode: 1), done, active: false).should be_true
+    end
+
+    it "prunes an episode Sonarr already imported (episode_has_file), no on-disk match" do
+      ArrTop::TUI.prune_completed?(
+        episode_row(episode: 1, episode_has_file: true), nil, active: false).should be_true
+    end
+
+    it "keeps the actively-copying episode even when its bytes overshoot the estimate" do
+      # Active (newest-mtime) file whose on-disk bytes exceed the per-episode
+      # estimate: still the one being written, so it must NOT prune.
+      over = ArrTop::ImportProgress.new("/tv/E02.mkv", 3_i64 * gb, 2_i64 * gb)
+      ArrTop::TUI.prune_completed?(episode_row(episode: 2), over, active: true).should be_false
+    end
+
+    it "keeps a pending episode (no file yet, not imported)" do
+      ArrTop::TUI.prune_completed?(episode_row(episode: 3), nil, active: false).should be_false
+    end
+
+    it "keeps a movie row (never a pack episode)" do
+      movie = ArrTop::QueueRow.new(
+        backend_name: "b", media_kind: :movie, state: ArrTop::State::Importing,
+        size: 1000_i64, size_left: 0_i64, import_target: 1000_i64, dest_folder: "/m")
+      present = ArrTop::ImportProgress.new("/m/f.mkv", 500_i64, 1000_i64)
+      ArrTop::TUI.prune_completed?(movie, present, active: false).should be_false
+    end
+
+    it "keeps a non-importing episode row" do
+      ArrTop::TUI.prune_completed?(downloading_row, nil, active: false).should be_false
+    end
+  end
+
   describe "#build_frame" do
     it "shows a friendly message for an empty queue, inside the box" do
       frame = build_tui.build_frame([] of ArrTop::QueueRow, {rows: 24, cols: 80})
@@ -225,6 +293,39 @@ describe ArrTop::TUI do
       rows = Array.new(20) { |i| downloading_row("Show #{i}") }
       frame = build_tui.build_frame(rows, {rows: 3, cols: 80})
       frame_lines(frame).size.should be <= 3
+    end
+
+    it "prunes completed pack episodes, keeping only the active + pending ones" do
+      # A live season-pack folder: E01 fully copied (older mtime, done), E02 the
+      # newest partial (actively copying), E03 not started yet (no file). The pack
+      # total is 6 GB across 3 episodes ⇒ a 2 GB per-episode estimate.
+      with_tempdir do |dir|
+        season = File.join(dir, "Season 01")
+        e01 = File.join(season, "The.Show.S01E01.mkv")
+        e02 = File.join(season, "The.Show.S01E02.mkv")
+        write_sized(e01, 2_i64 * 1024 * 1024 * 1024) # done (full)
+        write_sized(e02, 1_i64 * 1024 * 1024 * 1024) # actively copying (~50%)
+        now = Time.utc
+        File.touch(e01, now - 10.minutes) # older ⇒ not active ⇒ pruned
+        File.touch(e02, now)              # newest ⇒ active ⇒ kept
+
+        rows = [
+          pack_episode_row(1, dir), # completed ⇒ pruned
+          pack_episode_row(2, dir), # active ⇒ kept, shows the pair
+          pack_episode_row(3, dir), # pending (no file) ⇒ kept, shows single size
+        ]
+        frame = build_tui.build_frame(rows, {rows: 24, cols: 110})
+
+        frame.should_not contain("S01E01")  # the completed episode is gone
+        frame.should contain("S01E02")      # the active episode stays
+        frame.should contain("1 GB / 2 GB") # active shows its real disk/total pair
+        frame.should contain("S01E03")      # the pending episode stays
+        frame.should contain("2.00 GB")     # pending shows just the size (no pair)
+        # Header counts reflect what's shown, not the original 3 importing.
+        frame.should contain("1 importing")
+        frame.should contain("1 pending")
+        frame.should_not contain("3 importing")
+      end
     end
   end
 end
