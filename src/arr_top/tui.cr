@@ -39,7 +39,9 @@ module ArrTop
     # the poller sleeps. This never polls the backends.
     ANIMATE_INTERVAL = 1.second
 
-    def initialize(@poller : Poller, @refresh : Time::Span, @terminal : Terminal = Terminal.new,
+    def initialize(@poller : Poller, @refresh : Time::Span,
+                   @sizes : TorrentSizes = TorrentSizes.disabled,
+                   @terminal : Terminal = Terminal.new,
                    @theme : Theme = Theme.detect(tty: STDOUT.tty?))
       @rates = ImportRateTracker.new
       # `nil` is the EOF sentinel the reader sends when stdin closes (so the loop
@@ -98,7 +100,12 @@ module ArrTop
         loop do
           rows =
             begin
-              @poller.rows
+              polled = @poller.rows
+              # Warm the exact-size cache off the UI fiber (cached network fetch),
+              # BEFORE publishing so the next render reads exact sizes. `#warm`
+              # never raises.
+              @sizes.warm(polled)
+              polled
             rescue ex
               Log.warn { "poll failed; retrying in #{@refresh}: #{ex.message}" }
               nil
@@ -204,13 +211,13 @@ module ArrTop
       states = [] of State
       imports = [] of ImportProgress?
       rows.each do |row|
-        state, import, prune = TUI.resolve_display(row, group_counts)
+        state, import, prune = TUI.resolve_display(row, group_counts, @sizes)
         next if prune
         kept_rows << row
         states << state
         imports << import
       end
-      sizes = kept_rows.map { |row| TUI.effective_target(row, group_counts) }
+      sizes = kept_rows.map { |row| TUI.effective_target(row, group_counts, @sizes) }
       disks = kept_rows.map_with_index { |row, i| TUI.disk_bytes(row, states[i], imports[i], sizes[i]) }
       speed = aggregate_speed(imports)
 
@@ -316,8 +323,9 @@ module ArrTop
     # snapshot (`CLI.print_snapshot`) key off this single `prune` flag so the two
     # agree on what a season pack shows.
     def self.resolve_display(row : QueueRow,
-                             group_counts : Hash(String, Int32)) : {State, ImportProgress?, Bool}
-      target = effective_target(row, group_counts)
+                             group_counts : Hash(String, Int32),
+                             sizes : TorrentSizes? = nil) : {State, ImportProgress?, Bool}
+      target = effective_target(row, group_counts, sizes)
       on_disk, active = watch_progress(row, target)
       state, progress = display_state_and_progress(row, on_disk, active, target)
       {state, progress, prune_completed?(row, on_disk, active)}
@@ -382,8 +390,20 @@ module ArrTop
     # *whole pack's* size on every episode row (no per-episode size), so for an
     # episode row that shares its `download_id` with others (a season pack of
     # count > 1) the target is estimated as `import_target // count`. Single-file
-    # downloads and movies keep the reported `import_target`. Pure/unit-testable.
-    def self.effective_target(row : QueueRow, group_counts : Hash(String, Int32)) : Int64
+    # downloads and movies keep the reported `import_target`.
+    #
+    # When *sizes* is given and yields an EXACT per-episode size for this row (a
+    # configured qBittorrent client has the torrent's file list cached and this
+    # episode's file matched), that exact size wins over the pack-average
+    # estimate. Otherwise (no client / uncached / no match) the estimate below is
+    # used, so behaviour is unchanged when no download client is configured.
+    # Pure/unit-testable.
+    def self.effective_target(row : QueueRow, group_counts : Hash(String, Int32),
+                              sizes : TorrentSizes? = nil) : Int64
+      if sizes && (exact = sizes.exact_size(row))
+        return exact
+      end
+
       return row.import_target unless row.media_kind == :episode
       id = row.download_id
       return row.import_target if id.nil?

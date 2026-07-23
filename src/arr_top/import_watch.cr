@@ -131,7 +131,10 @@ module ArrTop
     # episode in a multi-episode file (`S02E03E04`) be skipped so BOTH episode 3
     # and episode 4 match their own token, and the trailing `(\b|E)` accepts a
     # boundary or the next `E` in that run.
-    private def self.episode_pattern(season : Int32, episode : Int32) : Regex
+    #
+    # Public so `TorrentSizes` matches a torrent's cached file names to an episode
+    # with the exact same rule the disk-watch uses on on-disk file names.
+    def self.episode_pattern(season : Int32, episode : Int32) : Regex
       Regex.new("\\bS0*#{season}(E\\d+)*?E0*#{episode}(\\b|E)", Regex::Options::IGNORE_CASE)
     end
 

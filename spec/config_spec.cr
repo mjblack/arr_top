@@ -110,6 +110,101 @@ describe ArrTop::Config do
     end
   end
 
+  describe "download_clients (optional)" do
+    it "is nil when the block is absent (feature off, config still valid)" do
+      config = ArrTop::Config.from_yaml(VALID_YAML)
+      config.download_clients.should be_nil
+      config.validation_errors.should be_empty
+    end
+
+    it "parses a qBittorrent client from YAML with a lowercase type" do
+      yaml = <<-YAML
+        #{VALID_YAML}
+        download_clients:
+          - name: qbit
+            type: qbittorrent
+            url: http://localhost:8080
+            username: admin
+            password: secret
+        YAML
+      config = ArrTop::Config.from_yaml(yaml)
+      clients = config.download_clients.should_not be_nil
+      clients.size.should eq(1)
+      clients[0].name.should eq("qbit")
+      clients[0].type.should eq(ArrTop::Config::DownloadClientType::Qbittorrent)
+      clients[0].url.should eq("http://localhost:8080")
+      clients[0].username.should eq("admin")
+      clients[0].password.should eq("secret")
+      config.validation_errors.should be_empty
+    end
+
+    it "parses a qBittorrent client from JSON" do
+      json = <<-JSON
+        {
+          "backends": [
+            { "name": "sonarr", "type": "sonarr", "url": "http://localhost:8989", "api_key": "abc123" }
+          ],
+          "download_clients": [
+            { "name": "qbit", "type": "qbittorrent", "url": "http://localhost:8080",
+              "username": "admin", "password": "secret" }
+          ]
+        }
+        JSON
+      config = ArrTop::Config.from_json(json)
+      clients = config.download_clients.should_not be_nil
+      clients[0].type.should eq(ArrTop::Config::DownloadClientType::Qbittorrent)
+      config.validation_errors.should be_empty
+    end
+
+    it "leniently parses an unknown client type as nil rather than crashing" do
+      yaml = <<-YAML
+        #{VALID_YAML}
+        download_clients:
+          - name: bogus
+            type: transmission
+            url: http://localhost:9091
+            username: admin
+            password: secret
+        YAML
+      config = ArrTop::Config.from_yaml(yaml)
+      clients = config.download_clients.should_not be_nil
+      clients[0].type.should be_nil
+    end
+
+    it "reports blank fields and an unknown type for a malformed client" do
+      yaml = <<-YAML
+        #{VALID_YAML}
+        download_clients:
+          - name: ""
+            type: transmission
+            url: ""
+            username: ""
+            password: ""
+        YAML
+      errors = ArrTop::Config.from_yaml(yaml).validation_errors
+      errors.any?(&.includes?("name is required")).should be_true
+      errors.any?(&.includes?("url is required")).should be_true
+      errors.any?(&.includes?("username is required")).should be_true
+      errors.any?(&.includes?("password is required")).should be_true
+      errors.any?(&.includes?("type must be qbittorrent")).should be_true
+    end
+
+    it "serializes the type lowercase in YAML and JSON" do
+      yaml = <<-YAML
+        #{VALID_YAML}
+        download_clients:
+          - name: qbit
+            type: qbittorrent
+            url: http://localhost:8080
+            username: admin
+            password: secret
+        YAML
+      config = ArrTop::Config.from_yaml(yaml)
+      config.to_yaml.should contain("type: qbittorrent")
+      config.to_json.should contain(%("type":"qbittorrent"))
+    end
+  end
+
   describe "#validate" do
     it "returns self when valid" do
       config = ArrTop::Config.from_yaml(VALID_YAML)

@@ -28,6 +28,78 @@ module ArrTop
       end
     end
 
+    # Which download client a `DownloadClient` speaks. Currently only
+    # qBittorrent. Serialized as lowercase `qbittorrent`; parsed leniently (see
+    # `DownloadClient::DownloadClientTypeConverter`).
+    enum DownloadClientType
+      Qbittorrent
+
+      def to_yaml(yaml : YAML::Nodes::Builder) : Nil
+        yaml.scalar(to_s.downcase)
+      end
+
+      def to_json(json : JSON::Builder) : Nil
+        json.string(to_s.downcase)
+      end
+    end
+
+    # An optional download client arrtop can query for **exact** per-episode
+    # sizes. A Sonarr season pack reports only the whole-pack total on every
+    # episode row, so without this arrtop estimates each episode as
+    # `pack_total / episode_count`. When a client is configured, arrtop asks it
+    # for the real size of each episode's file in the torrent instead. Fully
+    # optional: absent ⇒ the feature is off and behaviour is unchanged.
+    #
+    # A queue row is matched to a client by the row's `download_client` name, so
+    # a client's `name` here must equal the download-client name Sonarr reports.
+    class DownloadClient
+      include YAML::Serializable
+      include JSON::Serializable
+
+      # Must equal the download-client name the *arr reports on a queue row
+      # (`downloadClient`), so a row can be matched to this client.
+      property name : String
+
+      # Parsed leniently so an unknown value surfaces as a validation error
+      # rather than a parse crash. `nil` means the raw value was unrecognized.
+      @[YAML::Field(converter: ArrTop::Config::DownloadClient::DownloadClientTypeConverter)]
+      @[JSON::Field(converter: ArrTop::Config::DownloadClient::DownloadClientTypeConverter)]
+      property type : DownloadClientType?
+
+      # The client's Web UI base URL, e.g. `http://localhost:8080`.
+      property url : String
+
+      property username : String
+      property password : String
+
+      def initialize(@name : String, @type : DownloadClientType?, @url : String,
+                     @username : String, @password : String)
+      end
+
+      # Leniently parses `DownloadClientType`, yielding `nil` for unknown values
+      # so validation can report a helpful message instead of crashing the parse.
+      module DownloadClientTypeConverter
+        def self.from_yaml(ctx : YAML::ParseContext, node : YAML::Nodes::Node) : DownloadClientType?
+          unless node.is_a?(YAML::Nodes::Scalar)
+            node.raise "Expected scalar, not #{node.class}"
+          end
+          DownloadClientType.parse?(node.value)
+        end
+
+        def self.to_yaml(value : DownloadClientType?, yaml : YAML::Nodes::Builder) : Nil
+          value.to_yaml(yaml)
+        end
+
+        def self.from_json(pull : JSON::PullParser) : DownloadClientType?
+          DownloadClientType.parse?(pull.read_string)
+        end
+
+        def self.to_json(value : DownloadClientType?, json : JSON::Builder) : Nil
+          value.to_json(json)
+        end
+      end
+    end
+
     # A single Sonarr/Radarr instance to poll.
     class Backend
       include YAML::Serializable
@@ -77,12 +149,19 @@ module ArrTop
 
     property backends : Array(Backend) = [] of Backend
 
+    # Optional download clients arrtop queries for exact per-episode sizes. `nil`
+    # / absent ⇒ the feature is off and behaviour is identical to before (each
+    # season-pack episode is estimated as `pack_total / episode_count`). When
+    # present, every entry is validated by `#validation_errors`.
+    property download_clients : Array(DownloadClient)? = nil
+
     # How often the TUI redraws, as `<int>s` / `<int>ms` / a bare integer
     # (seconds). `nil` (unset) means the default; see `#refresh_span`. Validated
     # by `#validation_errors` when set.
     property refresh : String? = nil
 
-    def initialize(@backends : Array(Backend) = [] of Backend, @refresh : String? = nil)
+    def initialize(@backends : Array(Backend) = [] of Backend, @refresh : String? = nil,
+                   @download_clients : Array(DownloadClient)? = nil)
     end
 
     # Default TUI refresh interval when `refresh` is unset/blank/unparseable.
@@ -173,6 +252,25 @@ module ArrTop
         errors << "refresh #{value.inspect} is invalid; use <int>s, <int>ms, or a bare integer (seconds)"
       end
 
+      errors.concat(download_client_errors)
+      errors
+    end
+
+    # Validation problems for the optional `download_clients` block (empty when
+    # absent — the feature is simply off — or when every client is well-formed).
+    private def download_client_errors : Array(String)
+      errors = [] of String
+      clients = download_clients
+      return errors if clients.nil?
+
+      clients.each_with_index do |client, i|
+        label = client.name.blank? ? "download client ##{i + 1}" : "download client #{client.name.inspect}"
+        errors << "#{label}: name is required" if client.name.blank?
+        errors << "#{label}: url is required" if client.url.blank?
+        errors << "#{label}: username is required" if client.username.blank?
+        errors << "#{label}: password is required" if client.password.blank?
+        errors << "#{label}: type must be qbittorrent" if client.type.nil?
+      end
       errors
     end
 
