@@ -116,16 +116,19 @@ describe ArrTop::TUI do
       ArrTop::TUI.disk_bytes(row, ArrTop::State::Importing, done, 2_870_i64).should eq(2_870_i64)
     end
 
-    it "is nil for a pending row with no import progress" do
+    it "is zero (not nil) for a just-started importing row with no progress yet" do
+      row = episode_row(import_target: 2_870_i64)
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::Importing, nil, 2_870_i64).should eq(0_i64)
+    end
+
+    it "is nil for a pending row (only importing rows show the pair)" do
       row = episode_row
       ArrTop::TUI.disk_bytes(row, ArrTop::State::ImportPending, nil, 2_870_i64).should be_nil
     end
 
-    it "scales a downloading row's downloaded fraction onto the effective total" do
-      # 50% downloaded (size 1000, size_left 500) of a 2870-byte per-episode total
-      # → 1435 bytes on disk.
+    it "is nil for a downloading row (it shows just the size, not a pair)" do
       row = downloading_row
-      ArrTop::TUI.disk_bytes(row, ArrTop::State::Downloading, nil, 2_870_i64).should eq(1_435_i64)
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::Downloading, nil, 2_870_i64).should be_nil
     end
 
     it "is nil for a queued row" do
@@ -204,11 +207,12 @@ describe ArrTop::TUI do
       frame = build_tui.build_frame([downloading_row], {rows: 24, cols: 110})
       frame.should contain("downloading")
       frame.should contain("50.0%")
-      frame.should contain("█")          # bar cells
-      frame.should contain("500/1000 B") # combined on-disk/total size pair
-      frame.should contain("║")          # side borders
-      frame.should contain("MEDIA")      # column header row
-      frame.should contain("SIZE")       # column header includes the new column
+      frame.should contain("█")           # bar cells
+      frame.should contain("1000 B")      # just the size (downloading is not a pair)
+      frame.should_not contain("/1000 B") # no disk/total pair for a non-importing row
+      frame.should contain("║")           # side borders
+      frame.should contain("MEDIA")       # column header row
+      frame.should contain("SIZE")        # column header includes the new column
     end
 
     it "starts at cursor-home and clears to end of screen" do

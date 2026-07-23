@@ -354,17 +354,16 @@ module ArrTop
       count > 1 ? row.import_target // count : row.import_target
     end
 
-    # The bytes currently on disk behind a row's displayed progress bar — the
-    # numerator of the SIZE column's `disk/total` pair — or `nil` when there is
-    # nothing to show. Importing/done rows use the resolved copy *progress*'s real
-    # bytes (equal to *total* for a finished episode); a `Downloading` row scales
-    # its downloaded fraction onto the effective per-episode *total* (so DISK
-    # tracks the download bar and the per-episode SIZE, not the whole-pack size);
-    # pending/queued rows and any row without progress are `nil`. Pure/unit-testable.
+    # The bytes currently on disk behind an *importing* row's copy — the numerator
+    # of the SIZE column's `disk/total` pair — or `nil` for every other state (so
+    # only rows displayed as `Importing` show the pair; the rest show just the
+    # size). For an importing row it is the resolved copy *progress*'s real bytes,
+    # which is `0` at the start of a copy and equal to *total* for a finished
+    # episode (a nil *progress* ⇒ `0`). Pure/unit-testable. *row* and *total* are
+    # unused for now but kept so callers pass the row's full context.
     def self.disk_bytes(row : QueueRow, state : State, progress : ImportProgress?, total : Int64) : Int64?
-      return progress.bytes if progress
-      return nil unless state == State::Downloading && row.size > 0
-      ((row.size - row.size_left).to_f / row.size * total).to_i64
+      return nil unless state == State::Importing
+      progress.try(&.bytes) || 0_i64
     end
 
     # Pure reclassification: given a row, the import progress found on disk for it,

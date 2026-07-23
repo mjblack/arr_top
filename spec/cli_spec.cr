@@ -207,10 +207,12 @@ describe ArrTop::CLI do
       line.should_not contain("\e[") # no ANSI escapes
     end
 
-    it "shows —/total for a pending row with nothing on disk" do
-      row = private_row.call(ArrTop::State::ImportPending, 3_i64 * gb, 3_i64 * gb)
-      line = ArrTop::CLI.snapshot_row(row, ArrTop::State::ImportPending, nil, 3_i64 * gb, nil)
-      line.should contain("—/3 GB")
+    it "shows just the size (no pair) for a non-importing pending row" do
+      total = 3_i64 * gb
+      row = private_row.call(ArrTop::State::ImportPending, total, total)
+      line = ArrTop::CLI.snapshot_row(row, ArrTop::State::ImportPending, nil, total, nil)
+      line.should contain(ArrTop::Render.human_bytes(total)) # e.g. `3.00 GB`
+      line.should_not contain("/3")                          # no disk/total pair
       line.should contain("pending")
     end
   end

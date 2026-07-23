@@ -228,9 +228,10 @@ module ArrTop
     # reclassification the TUI uses (`TUI.resolve_display` / `effective_target` /
     # `disk_bytes`), so a season pack renders identically here: already-copied
     # episodes read `100.0%`, the one actively copying reads its estimated %,
-    # not-yet-started episodes show `pending` with `—`, and SIZE shows a combined
-    # `on-disk/total` pair in one unit (per-episode estimate, not the repeated pack
-    # total). The IMPORT% cell is `—` for non-importing rows and for importing rows
+    # not-yet-started episodes show `pending` with `—`, and SIZE shows the
+    # `on-disk/total` pair in one unit for an actively importing row (per-episode
+    # estimate, not the repeated pack total) but just the size for every other
+    # row. The IMPORT% cell is `—` for non-importing rows and for importing rows
     # arrtop cannot watch (off-host / destination file not yet created). Used for
     # non-tty output and `--once`.
     private def self.print_snapshot(rows : Array(QueueRow)) : Nil

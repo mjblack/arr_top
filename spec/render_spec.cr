@@ -94,14 +94,20 @@ describe ArrTop::Render do
       ArrTop::Render.human_size_pair(disk, total).should eq("1.9/2.9 GB")
     end
 
+    it "shows a numeric zero on-disk part (never a dash) for a just-started import" do
+      ArrTop::Render.human_size_pair(0_i64, (2.9 * gb).to_i64).should eq("0/2.9 GB")
+    end
+
     it "uses the total's unit for the disk number too (shared unit)" do
       # disk is 512 MB, total is 2 GB → disk shown as a fraction of a GB (0.5),
       # NOT switched to its own MB unit.
       ArrTop::Render.human_size_pair(512_i64 * 1024 * 1024, 2_i64 * gb).should eq("0.5/2 GB")
     end
 
-    it "shows —/total when disk is nil (nothing on disk yet)" do
-      ArrTop::Render.human_size_pair(nil, (2.9 * gb).to_i64).should eq("—/2.9 GB")
+    it "shows just the size (single value) when disk is nil (not importing)" do
+      total = (2.9 * gb).to_i64
+      ArrTop::Render.human_size_pair(nil, total).should eq(ArrTop::Render.human_bytes(total))
+      ArrTop::Render.human_size_pair(nil, total).should_not contain("/")
     end
 
     it "is — when the total is zero or negative" do
@@ -249,7 +255,7 @@ describe ArrTop::Render do
       line.should contain("downloading")
     end
 
-    it "shows the combined disk/total size pair in the SIZE column" do
+    it "shows the combined disk/total size pair for an importing row (disk non-nil)" do
       # 1.9 GB on disk of a 2.9 GB target → `1.9/2.9 GB`, right-aligned in SIZE.
       disk = (1.9 * gb).to_i64
       total = (2.9 * gb).to_i64
@@ -259,11 +265,12 @@ describe ArrTop::Render do
       line.size.should eq(width)
     end
 
-    it "shows —/total in the SIZE column when nothing is on disk yet" do
+    it "shows just the size (no pair) in the SIZE column for a non-importing row (disk nil)" do
       total = (2.9 * gb).to_i64
       line = ArrTop::Render.render_row(
         build_row(ArrTop::State::ImportPending), nil, nil, total, theme, width)
-      line.should contain("—/2.9 GB")
+      line.should contain(ArrTop::Render.human_bytes(total)) # e.g. `2.90 GB`
+      line.should_not contain("/2.9")                        # no disk/total pair
     end
 
     it "shows a bar and percent for an importing row (from copy progress)" do

@@ -102,17 +102,20 @@ module ArrTop
       idx.zero? ? "#{n} B" : "%.2f %s" % {value, BYTE_UNITS[idx]}
     end
 
-    # Formats a `disk/total` size pair sharing *total*'s unit, e.g. `1.9/2.9 GB`
-    # or `12/30 GB` (both numbers rendered in the unit chosen from *total*, with
-    # up to one decimal and a trailing `.0` trimmed). When *disk* is nil (nothing
-    # on disk yet) the left side is `—`, e.g. `—/2.9 GB`. `total <= 0` → `—`.
+    # Formats a row's SIZE cell. When *disk* is nil the row is not actively
+    # importing, so it shows **just the size** — a single `human_bytes(total)`,
+    # e.g. `2.9 GB`. When *disk* is non-nil (an importing row) it shows a
+    # `disk/total` pair sharing *total*'s unit, with the on-disk part rendered
+    # numerically **including zero** — e.g. `0/2.9 GB` (just started),
+    # `1.9/2.9 GB` (copying), `2.9/2.9 GB` (done). Both numbers use up to one
+    # decimal with a trailing `.0` trimmed. `total <= 0` → `—`.
     def self.human_size_pair(disk : Int64?, total : Int64) : String
       return "—" if total <= 0
+      return human_bytes(total) if disk.nil?
       total_value, idx = scale_bytes(total)
       unit = BYTE_UNITS[idx]
       divisor = 1024.0 ** idx
-      disk_str = disk.nil? ? "—" : trim_decimal(disk.to_f / divisor)
-      "#{disk_str}/#{trim_decimal(total_value)} #{unit}"
+      "#{trim_decimal(disk.to_f / divisor)}/#{trim_decimal(total_value)} #{unit}"
     end
 
     # Renders *value* with one decimal place, dropping a trailing `.0` so whole
@@ -198,9 +201,10 @@ module ArrTop
     # One data row laid out into *width* visible cells: Movie · Torrent · Status ·
     # Size · Progress. Movie is `media_name` (`—` when nil), Torrent is the release
     # `title`; both are truncated to their fixed widths. Status is the coloured
-    # state label. Size is the combined `disk/total` pair (`disk_bytes` on disk now,
-    # `size_bytes` the effective per-episode total) right-aligned via
-    # `human_size_pair`; `disk_bytes` nil renders `—/total`. Progress is a
+    # state label. Size is right-aligned via `human_size_pair`: an actively
+    # importing row (`disk_bytes` non-nil, the copied bytes) shows the `disk/total`
+    # pair (e.g. `0/2.9 GB` … `2.9/2.9 GB`); every other row (`disk_bytes` nil)
+    # shows just the size `size_bytes` (e.g. `2.9 GB`). Progress is a
     # bar+percent — **only** for `Downloading` (from `download_percent`) and
     # `Importing` (from *import*'s copy percent) rows; every other state (incl.
     # `ImportPending`) leaves the progress cell blank. The returned string is
@@ -360,8 +364,9 @@ module ArrTop
       theme.colorize(truncate(label, w).ljust(w), theme.status_code(row, state))
     end
 
-    # The Size cell: the `disk/total` pair via `human_size_pair`, truncated + right-
-    # aligned to *w*, coloured dim. `w <= 0` yields an empty string.
+    # The Size cell via `human_size_pair` (a `disk/total` pair for an importing
+    # row, else just the size), truncated + right-aligned to *w*, coloured dim.
+    # `w <= 0` yields an empty string.
     private def self.size_cell(disk : Int64?, total : Int64, w : Int32, theme : Theme) : String
       return "" if w <= 0
       theme.colorize(truncate(human_size_pair(disk, total), w).rjust(w), theme.status_unknown)
