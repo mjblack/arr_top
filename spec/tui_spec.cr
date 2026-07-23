@@ -15,12 +15,14 @@ private def episode_row(
   season : Int32? = 2,
   episode : Int32? = 3,
   import_target : Int64 = 1000_i64,
+  download_id : String? = nil,
 ) : ArrTop::QueueRow
   ArrTop::QueueRow.new(
     backend_name: "b", media_kind: :episode, state: ArrTop::State::Importing,
     size: import_target, size_left: 0_i64, import_target: import_target,
     title: "The.Show.S02E03", media_name: "The Show S02E03", dest_folder: "/tv/The Show",
     season_number: season, episode_number: episode, episode_has_file: episode_has_file,
+    download_id: download_id,
   )
 end
 
@@ -57,39 +59,91 @@ describe ArrTop::TUI do
     end
   end
 
+  describe ".download_group_counts" do
+    it "counts rows per download_id, ignoring nil ids" do
+      rows = [
+        episode_row(episode: 1, download_id: "pack"),
+        episode_row(episode: 2, download_id: "pack"),
+        episode_row(episode: 3, download_id: "pack"),
+        episode_row(episode: 1, download_id: "solo"),
+        episode_row(episode: 1, download_id: nil),
+      ]
+      counts = ArrTop::TUI.download_group_counts(rows)
+      counts["pack"].should eq(3)
+      counts["solo"].should eq(1)
+      counts.has_key?(nil).should be_false
+    end
+  end
+
+  describe ".effective_target" do
+    it "splits the pack total across the pack's episodes (count > 1)" do
+      counts = {"pack" => 8}
+      row = episode_row(import_target: 22_961_512_974_i64, download_id: "pack")
+      # ~22.96 GB / 8 ≈ 2.87 GB per episode.
+      ArrTop::TUI.effective_target(row, counts).should eq(2_870_189_121_i64)
+    end
+
+    it "keeps the reported target for a single-file download (count 1)" do
+      counts = {"solo" => 1}
+      row = episode_row(import_target: 3_000_i64, download_id: "solo")
+      ArrTop::TUI.effective_target(row, counts).should eq(3_000_i64)
+    end
+
+    it "keeps the reported target for a row with no download_id" do
+      row = episode_row(import_target: 3_000_i64, download_id: nil)
+      ArrTop::TUI.effective_target(row, {} of String => Int32).should eq(3_000_i64)
+    end
+
+    it "keeps the reported target for movies" do
+      movie = ArrTop::QueueRow.new(
+        backend_name: "b", media_kind: :movie, state: ArrTop::State::Importing,
+        size: 5_000_i64, size_left: 0_i64, import_target: 5_000_i64,
+        download_id: "m")
+      ArrTop::TUI.effective_target(movie, {"m" => 3}).should eq(5_000_i64)
+    end
+  end
+
   describe ".display_state_and_progress" do
-    it "shows a done episode (episode_has_file) as importing at 100%, even with no on-disk match" do
-      state, import = ArrTop::TUI.display_state_and_progress(episode_row(episode_has_file: true), nil)
-      state.should eq(ArrTop::State::Importing)
-      import.as(ArrTop::ImportProgress).percent.should eq(100.0)
-    end
-
-    it "forces 100% for a done episode even when the on-disk file reads partial" do
-      partial = ArrTop::ImportProgress.new("/tv/f.mkv", 400_i64, 1000_i64)
-      state, import = ArrTop::TUI.display_state_and_progress(episode_row(episode_has_file: true), partial)
-      state.should eq(ArrTop::State::Importing)
-      import.as(ArrTop::ImportProgress).percent.should eq(100.0)
-    end
-
-    it "shows a copying episode with its partial on-disk bar" do
-      partial = ArrTop::ImportProgress.new("/tv/f.mkv", 410_i64, 1000_i64)
-      state, import = ArrTop::TUI.display_state_and_progress(episode_row(episode_has_file: false), partial)
+    it "shows an active (newest-mtime) episode with its real partial bar" do
+      # 574 of the ~2.87 GB per-episode estimate ≈ 20%.
+      partial = ArrTop::ImportProgress.new("/tv/E04.mkv", 574_i64, 2_870_i64)
+      state, import = ArrTop::TUI.display_state_and_progress(
+        episode_row(episode_has_file: false), partial, active: true, target: 2_870_i64)
       state.should eq(ArrTop::State::Importing)
       import.should eq(partial)
-      import.as(ArrTop::ImportProgress).percent.should be_close(41.0, 0.01)
+      import.as(ArrTop::ImportProgress).percent.should be_close(20.0, 0.1)
+    end
+
+    it "shows a present-but-not-active episode (already copied) at 100%" do
+      # An older-mtime file that has finished copying: bytes on disk are the
+      # partial reading from a prior frame, but not-active ⇒ done ⇒ 100%.
+      partial = ArrTop::ImportProgress.new("/tv/E01.mkv", 400_i64, 2_870_i64)
+      state, import = ArrTop::TUI.display_state_and_progress(
+        episode_row(episode_has_file: false), partial, active: false, target: 2_870_i64)
+      state.should eq(ArrTop::State::Importing)
+      import.as(ArrTop::ImportProgress).percent.should eq(100.0)
+      import.as(ArrTop::ImportProgress).file.should eq("/tv/E01.mkv")
     end
 
     it "reclassifies an importing episode with no file yet as pending (no bar)" do
-      state, import = ArrTop::TUI.display_state_and_progress(episode_row(episode_has_file: false), nil)
+      state, import = ArrTop::TUI.display_state_and_progress(
+        episode_row(episode_has_file: false), nil, active: false, target: 2_870_i64)
       state.should eq(ArrTop::State::ImportPending)
       import.should be_nil
+    end
+
+    it "falls back to 100% when there is no on-disk match but episode_has_file is set" do
+      state, import = ArrTop::TUI.display_state_and_progress(
+        episode_row(episode_has_file: true), nil, active: false, target: 2_870_i64)
+      state.should eq(ArrTop::State::Importing)
+      import.as(ArrTop::ImportProgress).percent.should eq(100.0)
     end
 
     it "leaves movie rows untouched (no reclassification)" do
       movie = ArrTop::QueueRow.new(
         backend_name: "b", media_kind: :movie, state: ArrTop::State::Importing,
         size: 1000_i64, size_left: 0_i64, import_target: 1000_i64, dest_folder: "/m")
-      state, import = ArrTop::TUI.display_state_and_progress(movie, nil)
+      state, import = ArrTop::TUI.display_state_and_progress(movie, nil, active: false, target: 1000_i64)
       state.should eq(ArrTop::State::Importing)
       import.should be_nil
     end
@@ -99,7 +153,7 @@ describe ArrTop::TUI do
         backend_name: "b", media_kind: :episode, state: ArrTop::State::Downloading,
         size: 1000_i64, size_left: 500_i64, import_target: 1000_i64,
         season_number: 2, episode_number: 3)
-      state, import = ArrTop::TUI.display_state_and_progress(row, nil)
+      state, import = ArrTop::TUI.display_state_and_progress(row, nil, active: false, target: 1000_i64)
       state.should eq(ArrTop::State::Downloading)
       import.should be_nil
     end

@@ -19,14 +19,19 @@ module ArrTop
     end
 
     # Fetches the full queue, following paging until every record is collected.
-    # `include_series: true` so `series.path` is available for `dest_folder`.
+    # `include_series: true` so `series.path` is available for `dest_folder`, and
+    # `include_episode: true` so `record.episode` (hence `episode_number`) is
+    # populated — without it every season-pack row's episode is nil and the
+    # per-episode file matching silently falls back to the folder's newest file,
+    # making all episodes show the same (wrong) percentage.
     def rows : Array(QueueRow)
       api = Sonarr::Api::Queue.new(@client)
       result = [] of QueueRow
       page = 1
 
       loop do
-        resource = api.list(page: page, page_size: QUEUE_PAGE_SIZE, include_series: true)
+        resource = api.list(page: page, page_size: QUEUE_PAGE_SIZE,
+          include_series: true, include_episode: true)
         break if resource.nil?
 
         records = resource.records
