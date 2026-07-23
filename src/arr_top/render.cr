@@ -27,6 +27,7 @@ module ArrTop
     MOVIE_WIDTH   = 20
     TORRENT_WIDTH = 28
     STATUS_WIDTH  = 11 # widest label is "downloading" (11)
+    SIZE_WIDTH    = 13 # fits the combined `disk/total` pair, e.g. `1.9/2.9 GB` / `85.3/95.7 GB`
 
     # Double-line box-drawing pieces (U+2550–U+2563).
     BOX_TL = "╔"
@@ -39,7 +40,7 @@ module ArrTop
     BOX_MR = "╣"
 
     # Column header labels.
-    HEADER_LABELS = {movie: "MEDIA", torrent: "TORRENT", status: "STATUS", progress: "PROGRESS"}
+    HEADER_LABELS = {movie: "MEDIA", torrent: "TORRENT", status: "STATUS", size: "SIZE", progress: "PROGRESS"}
 
     # Human-readable status label per `State` (also used in the queue summary).
     STATE_LABELS = {
@@ -78,17 +79,50 @@ module ArrTop
       end
     end
 
-    # Formats a byte count like `9.43 GB` (base 1024). Whole bytes stay as
-    # `512 B`; larger units get two decimals. Non-positive counts are `0 B`.
-    def self.human_bytes(n : Int64) : String
-      return "0 B" if n <= 0
+    # Scales a positive byte count onto the base-1024 unit ladder, returning
+    # `{value, unit_index}` where `BYTE_UNITS[unit_index]` is the unit and `value`
+    # is `n` expressed in it (e.g. `1536` → `{1.5, 1}` for KB). `n <= 0` → `{0.0, 0}`.
+    # Shared so a single number and a `disk/total` pair pick units the same way.
+    private def self.scale_bytes(n : Int64) : {Float64, Int32}
+      return {0.0, 0} if n <= 0
       value = n.to_f
       idx = 0
       while value >= 1024 && idx < BYTE_UNITS.size - 1
         value /= 1024
         idx += 1
       end
+      {value, idx}
+    end
+
+    # Formats a byte count like `9.43 GB` (base 1024). Whole bytes stay as
+    # `512 B`; larger units get two decimals. Non-positive counts are `0 B`.
+    def self.human_bytes(n : Int64) : String
+      return "0 B" if n <= 0
+      value, idx = scale_bytes(n)
       idx.zero? ? "#{n} B" : "%.2f %s" % {value, BYTE_UNITS[idx]}
+    end
+
+    # Formats a row's SIZE cell. When *disk* is nil the row is not actively
+    # importing, so it shows **just the size** — a single `human_bytes(total)`,
+    # e.g. `2.9 GB`. When *disk* is non-nil (an importing row) it shows a
+    # `disk/total` pair sharing *total*'s unit, with the on-disk part rendered
+    # numerically **including zero** — e.g. `0/2.9 GB` (just started),
+    # `1.9/2.9 GB` (copying), `2.9/2.9 GB` (done). Both numbers use up to one
+    # decimal with a trailing `.0` trimmed. `total <= 0` → `—`.
+    def self.human_size_pair(disk : Int64?, total : Int64) : String
+      return "—" if total <= 0
+      return human_bytes(total) if disk.nil?
+      total_value, idx = scale_bytes(total)
+      unit = BYTE_UNITS[idx]
+      divisor = 1024.0 ** idx
+      "#{trim_decimal(disk.to_f / divisor)}/#{trim_decimal(total_value)} #{unit}"
+    end
+
+    # Renders *value* with one decimal place, dropping a trailing `.0` so whole
+    # numbers stay compact (`30.0` → `30`, `2.9` → `2.9`).
+    private def self.trim_decimal(value : Float64) : String
+      str = "%.1f" % value
+      str.ends_with?(".0") ? str[0, str.size - 2] : str
     end
 
     # Formats a span like `1h20m`, `5m3s`, or `42s`. Non-positive spans are `0s`;
@@ -128,12 +162,12 @@ module ArrTop
       parts.empty? ? "idle" : parts.join(" · ")
     end
 
-    # Column widths `{movie, torrent, status, progress}` for a content row of
-    # *width* visible cells. Columns are placed left-to-right at their fixed
+    # Column widths `{movie, torrent, status, size, progress}` for a content row
+    # of *width* visible cells. Columns are placed left-to-right at their fixed
     # widths with one-space gaps; when the row is too narrow the rightmost
     # columns shrink and then drop (width 0) rather than wrap. `progress` takes
     # whatever remains, capped at `MAX_PROGRESS`.
-    def self.plan_columns(width : Int32) : {Int32, Int32, Int32, Int32}
+    def self.plan_columns(width : Int32) : {Int32, Int32, Int32, Int32, Int32}
       width = 0 if width < 0
       gap = 1
 
@@ -152,33 +186,46 @@ module ArrTop
         rem -= gap + status
       end
 
+      size = 0
+      if rem > gap
+        size = {SIZE_WIDTH, rem - gap}.min
+        rem -= gap + size
+      end
+
       progress = 0
       progress = {MAX_PROGRESS, rem - gap}.min if rem > gap
 
-      {movie, torrent, status, progress}
+      {movie, torrent, status, size, progress}
     end
 
     # One data row laid out into *width* visible cells: Movie · Torrent · Status ·
-    # Progress. Movie is `media_name` (`—` when nil), Torrent is the release
+    # Size · Progress. Movie is `media_name` (`—` when nil), Torrent is the release
     # `title`; both are truncated to their fixed widths. Status is the coloured
-    # state label. Progress is a bar+percent — **only** for `Downloading` (from
-    # `download_percent`) and `Importing` (from *import*'s copy percent) rows;
-    # every other state (incl. `ImportPending`) leaves the progress cell blank.
-    # The returned string is exactly *width* visible cells wide.
+    # state label. Size is right-aligned via `human_size_pair`: an actively
+    # importing row (`disk_bytes` non-nil, the copied bytes) shows the `disk/total`
+    # pair (e.g. `0/2.9 GB` … `2.9/2.9 GB`); every other row (`disk_bytes` nil)
+    # shows just the size `size_bytes` (e.g. `2.9 GB`). Progress is a
+    # bar+percent — **only** for `Downloading` (from `download_percent`) and
+    # `Importing` (from *import*'s copy percent) rows; every other state (incl.
+    # `ImportPending`) leaves the progress cell blank. The returned string is
+    # exactly *width* visible cells wide.
     #
     # *display_state* is the effective state to render (label + progress); it can
     # differ from `row.state` when the TUI reclassifies a Sonarr season-pack row
     # (e.g. an "importing" episode with no file yet is displayed as pending). It
     # defaults to `row.state` so callers that don't reclassify are unaffected.
-    def self.render_row(row : QueueRow, import : ImportProgress?, theme : Theme, width : Int32,
+    def self.render_row(row : QueueRow, import : ImportProgress?,
+                        disk_bytes : Int64?, size_bytes : Int64,
+                        theme : Theme, width : Int32,
                         display_state : State = row.state) : String
       width = 0 if width < 0
       widths = plan_columns(width)
-      m, t, s, p = widths
+      m, t, s, sz, p = widths
       cells = {
         movie_cell(row, m),
         torrent_cell(row, t),
         status_cell(row, display_state, theme, s),
+        size_cell(disk_bytes, size_bytes, sz, theme),
         progress_cell(row, display_state, import, theme, p),
       }
       assemble(width, widths, cells)
@@ -189,11 +236,12 @@ module ArrTop
     def self.header_row(theme : Theme, width : Int32) : String
       width = 0 if width < 0
       widths = plan_columns(width)
-      m, t, s, p = widths
+      m, t, s, sz, p = widths
       cells = {
         label_cell(HEADER_LABELS[:movie], m, theme),
         label_cell(HEADER_LABELS[:torrent], t, theme),
         label_cell(HEADER_LABELS[:status], s, theme),
+        label_cell(HEADER_LABELS[:size], sz, theme, right: true),
         label_cell(HEADER_LABELS[:progress], p, theme),
       }
       assemble(width, widths, cells)
@@ -261,11 +309,11 @@ module ArrTop
       theme.colorize("#{left}#{BOX_H * (cols - 2)}#{right}", theme.border)
     end
 
-    # Joins the four already-coloured, already-width-`w` cells with one-space
+    # Joins the five already-coloured, already-width-`w` cells with one-space
     # gaps (only between present columns) and right-pads to exactly *width*.
-    private def self.assemble(width : Int32, widths : {Int32, Int32, Int32, Int32}, cells : {String, String, String, String}) : String
-      m, t, s, p = widths
-      cm, ct, cs, cp = cells
+    private def self.assemble(width : Int32, widths : {Int32, Int32, Int32, Int32, Int32}, cells : {String, String, String, String, String}) : String
+      m, t, s, sz, p = widths
+      cm, ct, cs, csz, cp = cells
       String.build do |io|
         used = 0
         if m > 0
@@ -279,6 +327,10 @@ module ArrTop
         if s > 0
           io << ' ' << cs
           used += 1 + s
+        end
+        if sz > 0
+          io << ' ' << csz
+          used += 1 + sz
         end
         if p > 0
           io << ' ' << cp
@@ -312,10 +364,21 @@ module ArrTop
       theme.colorize(truncate(label, w).ljust(w), theme.status_code(row, state))
     end
 
-    # A bold column-label cell padded to *w*.
-    private def self.label_cell(text : String, w : Int32, theme : Theme) : String
+    # The Size cell via `human_size_pair` (a `disk/total` pair for an importing
+    # row, else just the size), truncated + right-aligned to *w*, coloured dim.
+    # `w <= 0` yields an empty string.
+    private def self.size_cell(disk : Int64?, total : Int64, w : Int32, theme : Theme) : String
       return "" if w <= 0
-      theme.colorize(truncate(text, w).ljust(w), theme.header_label)
+      theme.colorize(truncate(human_size_pair(disk, total), w).rjust(w), theme.status_unknown)
+    end
+
+    # A bold column-label cell padded to *w*; left-justified by default,
+    # right-justified when *right* is set (to align a numeric column's header).
+    private def self.label_cell(text : String, w : Int32, theme : Theme, right : Bool = false) : String
+      return "" if w <= 0
+      fit = truncate(text, w)
+      padded = right ? fit.rjust(w) : fit.ljust(w)
+      theme.colorize(padded, theme.header_label)
     end
 
     # The Progress cell: a coloured bar + percent for `Downloading`/`Importing`,

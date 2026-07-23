@@ -80,6 +80,42 @@ describe ArrTop::Render do
     end
   end
 
+  describe ".human_size_pair" do
+    gb = 1024_i64 * 1024 * 1024
+
+    it "renders both numbers in the total's unit, trimming trailing .0" do
+      # 12 GB on disk of 30 GB → whole numbers, no decimals, shared GB unit.
+      ArrTop::Render.human_size_pair(12_i64 * gb, 30_i64 * gb).should eq("12/30 GB")
+    end
+
+    it "keeps one decimal for fractional values" do
+      disk = (1.9 * gb).to_i64
+      total = (2.9 * gb).to_i64
+      ArrTop::Render.human_size_pair(disk, total).should eq("1.9/2.9 GB")
+    end
+
+    it "shows a numeric zero on-disk part (never a dash) for a just-started import" do
+      ArrTop::Render.human_size_pair(0_i64, (2.9 * gb).to_i64).should eq("0/2.9 GB")
+    end
+
+    it "uses the total's unit for the disk number too (shared unit)" do
+      # disk is 512 MB, total is 2 GB → disk shown as a fraction of a GB (0.5),
+      # NOT switched to its own MB unit.
+      ArrTop::Render.human_size_pair(512_i64 * 1024 * 1024, 2_i64 * gb).should eq("0.5/2 GB")
+    end
+
+    it "shows just the size (single value) when disk is nil (not importing)" do
+      total = (2.9 * gb).to_i64
+      ArrTop::Render.human_size_pair(nil, total).should eq(ArrTop::Render.human_bytes(total))
+      ArrTop::Render.human_size_pair(nil, total).should_not contain("/")
+    end
+
+    it "is — when the total is zero or negative" do
+      ArrTop::Render.human_size_pair(0_i64, 0_i64).should eq("—")
+      ArrTop::Render.human_size_pair(10_i64, -1_i64).should eq("—")
+    end
+  end
+
   describe ".human_duration" do
     it "shows hours+minutes past an hour" do
       ArrTop::Render.human_duration(1.hour + 20.minutes + 5.seconds).should eq("1h20m")
@@ -134,18 +170,26 @@ describe ArrTop::Render do
   end
 
   describe ".plan_columns" do
-    it "gives the fixed widths with gaps when the row is wide enough" do
-      m, t, s, p = ArrTop::Render.plan_columns(100)
+    it "yields five widths that fit within the row (columns + gaps ≤ width)" do
+      widths = ArrTop::Render.plan_columns(120)
+      widths.size.should eq(5)
+      m, t, s, sz, p = widths
       m.should eq(20)
       t.should eq(28)
       s.should eq(11)
+      sz.should eq(ArrTop::Render::SIZE_WIDTH)
       p.should be > 0
+      # present columns each cost a leading one-space gap (the first has none).
+      present = [m, t, s, sz, p].count(&.positive?)
+      total = m + t + s + sz + p + {present - 1, 0}.max
+      total.should be <= 120
     end
 
-    it "drops the progress and status columns on a narrow row" do
-      m, _t, s, p = ArrTop::Render.plan_columns(30)
+    it "drops the progress, size and status columns on a narrow row" do
+      m, _t, s, sz, p = ArrTop::Render.plan_columns(30)
       m.should eq(20)
       s.should eq(0)
+      sz.should eq(0)
       p.should eq(0)
     end
   end
@@ -183,6 +227,7 @@ describe ArrTop::Render do
       inner.should contain("MEDIA")
       inner.should contain("TORRENT")
       inner.should contain("STATUS")
+      inner.should contain("SIZE")
       inner.should contain("PROGRESS")
       ArrTop::Render.wrap(inner, 100, theme).size.should eq(100)
     end
@@ -192,15 +237,17 @@ describe ArrTop::Render do
     theme = ArrTop::Theme.disabled
     width = 90
 
+    gb = 1024_i64 * 1024 * 1024
+
     it "produces a line exactly the requested width" do
-      line = ArrTop::Render.render_row(build_row(ArrTop::State::Downloading), nil, theme, width)
+      line = ArrTop::Render.render_row(build_row(ArrTop::State::Downloading), nil, nil, 1000_i64, theme, width)
       line.size.should eq(width)
     end
 
     it "orders columns Movie, Torrent, Status and truncates the fixed name columns" do
       line = ArrTop::Render.render_row(
         build_row(ArrTop::State::Downloading, title: "A" * 40, media_name: "B" * 40),
-        nil, theme, width)
+        nil, nil, 1000_i64, theme, width)
       # Movie occupies the first 20 cells, ellipsis-truncated.
       line[0, 20].should eq(("B" * 19) + "…")
       # Torrent occupies the next 28 cells, after a one-space gap.
@@ -208,9 +255,27 @@ describe ArrTop::Render do
       line.should contain("downloading")
     end
 
+    it "shows the combined disk/total size pair for an importing row (disk non-nil)" do
+      # 1.9 GB on disk of a 2.9 GB target → `1.9/2.9 GB`, right-aligned in SIZE.
+      disk = (1.9 * gb).to_i64
+      total = (2.9 * gb).to_i64
+      line = ArrTop::Render.render_row(
+        build_row(ArrTop::State::Importing), nil, disk, total, theme, width)
+      line.should contain("1.9/2.9 GB")
+      line.size.should eq(width)
+    end
+
+    it "shows just the size (no pair) in the SIZE column for a non-importing row (disk nil)" do
+      total = (2.9 * gb).to_i64
+      line = ArrTop::Render.render_row(
+        build_row(ArrTop::State::ImportPending), nil, nil, total, theme, width)
+      line.should contain(ArrTop::Render.human_bytes(total)) # e.g. `2.90 GB`
+      line.should_not contain("/2.9")                        # no disk/total pair
+    end
+
     it "shows a bar and percent for an importing row (from copy progress)" do
       import = ArrTop::ImportProgress.new("/data/f.mkv", bytes: 41_i64, target: 100_i64)
-      line = ArrTop::Render.render_row(build_row(ArrTop::State::Importing), import, theme, width)
+      line = ArrTop::Render.render_row(build_row(ArrTop::State::Importing), import, 41_i64, 100_i64, theme, width)
       line.should contain("importing")
       line.should contain("█")
       line.should contain("41.0%")
@@ -219,13 +284,13 @@ describe ArrTop::Render do
     it "shows a bar and percent for a downloading row (from download percent)" do
       line = ArrTop::Render.render_row(
         build_row(ArrTop::State::Downloading, size: 1000_i64, size_left: 500_i64),
-        nil, theme, width)
+        nil, 500_i64, 1000_i64, theme, width)
       line.should contain("50.0%")
       line.should contain("█")
     end
 
     it "shows NEITHER a bar NOR a percent for an ImportPending row" do
-      line = ArrTop::Render.render_row(build_row(ArrTop::State::ImportPending), nil, theme, width)
+      line = ArrTop::Render.render_row(build_row(ArrTop::State::ImportPending), nil, nil, 1000_i64, theme, width)
       line.should contain("pending")
       line.should_not contain("█")
       line.should_not contain("%")
@@ -236,7 +301,7 @@ describe ArrTop::Render do
       # The row's real state is Importing (with a bar available), but the caller
       # reclassifies it to pending: label reads pending and NO bar is drawn.
       line = ArrTop::Render.render_row(
-        build_row(ArrTop::State::Importing), import, theme, width, ArrTop::State::ImportPending)
+        build_row(ArrTop::State::Importing), import, 41_i64, 100_i64, theme, width, ArrTop::State::ImportPending)
       line.should contain("pending")
       line.should_not contain("█")
       line.should_not contain("%")
@@ -244,20 +309,20 @@ describe ArrTop::Render do
 
     it "shows no bar for failed, queued, or unknown rows" do
       [ArrTop::State::Failed, ArrTop::State::Queued, ArrTop::State::Unknown].each do |state|
-        line = ArrTop::Render.render_row(build_row(state), nil, theme, width)
+        line = ArrTop::Render.render_row(build_row(state), nil, nil, 1000_i64, theme, width)
         line.should_not contain("█")
         line.should_not contain("%")
       end
     end
 
     it "renders the movie cell as — when media_name is nil" do
-      line = ArrTop::Render.render_row(build_row(ArrTop::State::Queued, media_name: nil), nil, theme, width)
+      line = ArrTop::Render.render_row(build_row(ArrTop::State::Queued, media_name: nil), nil, nil, 1000_i64, theme, width)
       line[0, 20].should eq("—".ljust(20))
     end
 
     it "never exceeds a narrow terminal width" do
       line = ArrTop::Render.render_row(
-        build_row(ArrTop::State::Downloading, title: "A very very very long title"), nil, theme, 30)
+        build_row(ArrTop::State::Downloading, title: "A very very very long title"), nil, nil, 1000_i64, theme, 30)
       line.size.should eq(30)
     end
   end

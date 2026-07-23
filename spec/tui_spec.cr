@@ -103,6 +103,40 @@ describe ArrTop::TUI do
     end
   end
 
+  describe ".disk_bytes" do
+    it "uses the resolved import progress's real bytes for an importing row" do
+      row = episode_row(import_target: 2_870_i64)
+      progress = ArrTop::ImportProgress.new("/tv/E03.mkv", 1_500_i64, 2_870_i64)
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::Importing, progress, 2_870_i64).should eq(1_500_i64)
+    end
+
+    it "reports the full size for a done episode (bytes == target)" do
+      row = episode_row(import_target: 2_870_i64)
+      done = ArrTop::ImportProgress.new("/tv/E03.mkv", 2_870_i64, 2_870_i64)
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::Importing, done, 2_870_i64).should eq(2_870_i64)
+    end
+
+    it "is zero (not nil) for a just-started importing row with no progress yet" do
+      row = episode_row(import_target: 2_870_i64)
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::Importing, nil, 2_870_i64).should eq(0_i64)
+    end
+
+    it "is nil for a pending row (only importing rows show the pair)" do
+      row = episode_row
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::ImportPending, nil, 2_870_i64).should be_nil
+    end
+
+    it "is nil for a downloading row (it shows just the size, not a pair)" do
+      row = downloading_row
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::Downloading, nil, 2_870_i64).should be_nil
+    end
+
+    it "is nil for a queued row" do
+      row = downloading_row
+      ArrTop::TUI.disk_bytes(row, ArrTop::State::Queued, nil, 1_000_i64).should be_nil
+    end
+  end
+
   describe ".display_state_and_progress" do
     it "shows an active (newest-mtime) episode with its real partial bar" do
       # 574 of the ~2.87 GB per-episode estimate ≈ 20%.
@@ -168,13 +202,17 @@ describe ArrTop::TUI do
       frame.should contain("╝") # bottom-right corner
     end
 
-    it "renders a downloading row with its status, bar and percent inside the box" do
-      frame = build_tui.build_frame([downloading_row], {rows: 24, cols: 80})
+    it "renders a downloading row with its status, size, bar and percent inside the box" do
+      # A wide terminal so the SIZE column and a full PROGRESS bar both fit.
+      frame = build_tui.build_frame([downloading_row], {rows: 24, cols: 110})
       frame.should contain("downloading")
       frame.should contain("50.0%")
-      frame.should contain("█")     # bar cells
-      frame.should contain("║")     # side borders
-      frame.should contain("MEDIA") # column header row
+      frame.should contain("█")           # bar cells
+      frame.should contain("1000 B")      # just the size (downloading is not a pair)
+      frame.should_not contain("/1000 B") # no disk/total pair for a non-importing row
+      frame.should contain("║")           # side borders
+      frame.should contain("MEDIA")       # column header row
+      frame.should contain("SIZE")        # column header includes the new column
     end
 
     it "starts at cursor-home and clears to end of screen" do
