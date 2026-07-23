@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-07-23
+
+### Added
+
+- **Optional qBittorrent integration for exact per-episode sizes.** When a
+  `download_clients:` entry (type `qbittorrent`) is configured and matches a
+  queue row's download client, arrtop reads each episode's true file size from
+  the torrent (cached per download, fetched off the UI thread) and uses it as the
+  target — so a season pack's SIZE, progress bars, and speed are exact instead of
+  the pack-average estimate. Absent config → unchanged behavior, no qB calls.
+
+### Fixed
+
+- Import speed no longer spikes to absurd values (e.g. 118 GB/s): the copy-rate
+  tracker is now keyed by the destination file, not the shared series folder, so
+  a season pack's episodes no longer cross-contaminate each other's rate.
+- Completed episodes of a season pack are pruned from the view, leaving the
+  actively-copying episode plus the not-yet-started ones.
+
+### Changed
+
+- The SIZE column caps on-disk at the total (never shows on-disk > total) and
+  formats each side in its own unit (e.g. `44 MB / 2.1 GB`) so a small copy no
+  longer rounds to `0`.
+
 ## [0.3.4] - 2026-07-23
 
 ### Fixed
