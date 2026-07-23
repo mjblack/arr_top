@@ -99,12 +99,17 @@ module ArrTop
       backends = build_backends(config)
       poller = Poller.new(backends)
 
+      # Optional exact per-episode sizes from a configured download client
+      # (qBittorrent). Absent `download_clients` ⇒ a no-op that always falls back
+      # to the pack-average estimate, so behaviour is unchanged.
+      sizes = TorrentSizes.build(config.download_clients)
+
       # Live TUI when stdout is a terminal and --once was not given; otherwise a
       # one-shot snapshot (piped/redirected output, CI, or an explicit --once).
       if tui?(argv)
-        TUI.new(poller, config.refresh_span).run
+        TUI.new(poller, config.refresh_span, sizes).run
       else
-        run_snapshot(poller)
+        run_snapshot(poller, sizes)
       end
     end
 
@@ -122,15 +127,19 @@ module ArrTop
     # Polls every backend once and prints the plain-text snapshot. Writes are
     # guarded against `IO::Error` (a closed stdout — e.g. `arrtop | head`) so the
     # process exits quietly instead of crashing on a broken pipe.
-    private def self.run_snapshot(poller : Poller) : Nil
+    private def self.run_snapshot(poller : Poller, sizes : TorrentSizes) : Nil
       rows = poller.rows
       Log.debug { "polled #{rows.size} rows" }
+
+      # Warm the exact-size cache synchronously before the single snapshot render
+      # (there is no background poller for `--once`). Never raises.
+      sizes.warm(rows)
 
       poller.errors.each do |name, message|
         Log.error { "backend #{name.inspect} failed: #{message}" }
       end
 
-      print_snapshot(rows)
+      print_snapshot(rows, sizes)
     rescue IO::Error
       # stdout closed (broken pipe) — nothing more to say.
     end
@@ -234,7 +243,7 @@ module ArrTop
     # row. The IMPORT% cell is `—` for non-importing rows and for importing rows
     # arrtop cannot watch (off-host / destination file not yet created). Used for
     # non-tty output and `--once`.
-    private def self.print_snapshot(rows : Array(QueueRow)) : Nil
+    private def self.print_snapshot(rows : Array(QueueRow), sizes : TorrentSizes) : Nil
       if rows.empty?
         puts "queue is empty"
         return
@@ -245,11 +254,11 @@ module ArrTop
 
       puts snapshot_header
       rows.each do |row|
-        state, progress, prune = TUI.resolve_display(row, group_counts)
+        state, progress, prune = TUI.resolve_display(row, group_counts, sizes)
         # Completed pack episodes are pruned (same flag the TUI uses), so a season
         # pack shows only the actively-copying episode and the pending ones.
         next if prune
-        total = TUI.effective_target(row, group_counts)
+        total = TUI.effective_target(row, group_counts, sizes)
         disk = TUI.disk_bytes(row, state, progress, total)
         puts snapshot_row(row, state, disk, total, progress)
       end

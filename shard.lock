@@ -20,6 +20,10 @@ shards:
     git: https://github.com/mamantoha/http_proxy.git
     version: 0.15.1
 
+  qbittorrent:
+    git: https://github.com/mjblack/qbittorrent.cr.git
+    version: 0.2.0
+
   radarr:
     git: https://github.com/mjblack/radarr.git
     version: 0.1.2

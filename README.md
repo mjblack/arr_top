@@ -86,8 +86,40 @@ backends:
 ```
 
 `refresh` accepts `<int>s`, `<int>ms`, or a bare integer (seconds); it sets how
-often the live view redraws (it also wakes instantly on a keypress). The config
-path is resolved in this order:
+often the live view redraws (it also wakes instantly on a keypress).
+
+### Exact per-episode sizes (optional download client)
+
+A Sonarr **season pack** reports only the *whole-pack* total on every episode
+row — there is no per-episode size in the *arr API — so arrtop estimates each
+episode as `pack_total / episode_count`. If you also point arrtop at the
+download client, it asks the client for the torrent's file list and uses the
+**real** size of each episode's file as the import target instead (exact SIZE
+column, progress-bar denominator, prune threshold, and aggregate).
+
+This is entirely **optional**: omit the `download_clients` block and behaviour is
+identical to before (the estimate, zero download-client calls). Only qBittorrent
+is supported for now.
+
+```yaml
+download_clients:
+  - name: qbit                    # MUST match the download-client name the *arr reports
+    type: qbittorrent             # qbittorrent (lowercase); only client for now
+    url: http://localhost:8080    # qBittorrent Web UI URL
+    username: admin
+    password: YOUR_QBITTORRENT_PASSWORD
+```
+
+A queue row is matched to a client by the row's **download-client name**, so the
+`name` here must equal the download-client name Sonarr shows for that download.
+The lookup is non-blocking (the background poller fetches each torrent's file
+list once and caches it; the render only reads the cache) and fully fault-
+tolerant: an unreachable client, a torrent not found, or a non-torrent (NZB)
+download simply falls back to the estimate — no crash, no UI stall. Each client
+needs a non-blank `name`, `url`, `username`, `password`, and a recognized `type`
+(`qbittorrent`).
+
+The config path is resolved in this order:
 
 1. `-c`/`--config <path>`
 2. the `ARR_TOP_CONFIG` environment variable

@@ -1,5 +1,5 @@
 {
-  "_comment": "arrtop configuration (JSON). Same shape as config.example.yaml. Resolve it via ./config.json, --config <path>, or ARR_TOP_CONFIG. type is sonarr|radarr (lowercase). refresh (optional) sets the TUI redraw interval as <int>s / <int>ms / a bare integer of seconds; default 2s.",
+  "_comment": "arrtop configuration (JSON). Same shape as config.example.yaml. Resolve it via ./config.json, --config <path>, or ARR_TOP_CONFIG. type is sonarr|radarr (lowercase). refresh (optional) sets the TUI redraw interval as <int>s / <int>ms / a bare integer of seconds; default 2s. download_clients (optional) lets arrtop query a download client (qbittorrent) for exact per-episode sizes; omit it to keep the pack-average estimate. Each client's name must match the download-client name the *arr reports on a queue row.",
   "refresh": "2s",
   "backends": [
     {
@@ -13,6 +13,15 @@
       "type": "radarr",
       "url": "http://localhost:7878",
       "api_key": "YOUR_RADARR_API_KEY"
+    }
+  ],
+  "download_clients": [
+    {
+      "name": "qbit",
+      "type": "qbittorrent",
+      "url": "http://localhost:8080",
+      "username": "admin",
+      "password": "YOUR_QBITTORRENT_PASSWORD"
     }
   ]
 }

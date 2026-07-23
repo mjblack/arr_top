@@ -23,3 +23,16 @@ backends:
     type: radarr
     url: http://localhost:7878
     api_key: YOUR_RADARR_API_KEY
+
+# OPTIONAL download clients, queried for the EXACT per-episode size of a season
+# pack (the *arr queue reports only the whole-pack total, so arrtop otherwise
+# estimates each episode as pack_total / episode_count). Omit this whole block to
+# keep that estimate — the feature is simply off. When present, a queue row is
+# matched to a client by the row's download-client name, so `name` here must
+# equal the download-client name Sonarr reports.
+# download_clients:
+#   - name: qbit                    # must match Sonarr's download-client name
+#     type: qbittorrent             # qbittorrent (lowercase); only client for now
+#     url: http://localhost:8080    # qBittorrent Web UI URL
+#     username: admin
+#     password: YOUR_QBITTORRENT_PASSWORD

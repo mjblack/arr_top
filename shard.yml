@@ -24,6 +24,9 @@ dependencies:
   radarr:
     github: mjblack/radarr
     version: 0.1.2
+  qbittorrent:
+    github: mjblack/qbittorrent.cr
+    version: 0.2.0
 
 development_dependencies:
   ameba:
