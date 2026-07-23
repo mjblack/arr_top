@@ -84,6 +84,47 @@ module ArrTop
       progress
     end
 
+    # Episode-aware watch for a Sonarr season pack. Finds *this* episode's file
+    # (by its `SxxEyy` token) under *dest_folder* and reports both its live copy
+    # progress and whether that file is the folder's **newest-mtime** video — the
+    # one Sonarr is actively copying right now.
+    #
+    # Returns `nil` (nothing to show) under the same conditions as `.progress`
+    # (off-host / blank folder / non-positive target / no matching file yet).
+    # Otherwise returns `{ImportProgress, active}` where `active == true` means
+    # this episode's file is the folder-wide newest video: a season pack is copied
+    # one file at a time, so already-copied episodes have older mtimes (`active ==
+    # false`, i.e. done) and only the file being written is newest.
+    #
+    # Two walks: one filtered to this episode's token (its bytes/path), one
+    # folder-wide (the newest video's path). All the walk's off-host / vanished-
+    # file / unreadable guarantees are inherited from `newest_video_file`/`walk`.
+    def self.episode_progress(dest_folder : String?, target : Int64,
+                              season : Int32, episode : Int32) : {ImportProgress, Bool}?
+      return nil if dest_folder.nil?
+      folder = dest_folder.strip
+      return nil if folder.empty?
+      return nil if target <= 0
+
+      unless Dir.exists?(folder)
+        Log.debug { "import folder not found (off-host?): #{folder}" }
+        return nil
+      end
+
+      match = newest_video_file(folder, episode_pattern(season, episode))
+      if match.nil?
+        Log.debug { "no file yet for S#{season}E#{episode} under #{folder}" }
+        return nil
+      end
+
+      file, bytes = match
+      newest = newest_video_file(folder, nil)
+      active = newest.nil? || newest[0] == file
+      progress = ImportProgress.new(file, bytes, target)
+      Log.debug { "episode watch #{file}: #{bytes}/#{target} active=#{active}" }
+      {progress, active}
+    end
+
     # A case-insensitive regex matching a filename's `SxxEyy` token for the given
     # *season*/*episode*, tolerant of zero-padding (`S2E3` == `S02E03`). The
     # leading `\b` anchors the season, the optional `(E\d+)*?` run lets an earlier

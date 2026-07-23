@@ -32,6 +32,37 @@ private def with_season_pack(&)
   end
 end
 
+# Mirrors the live Fallout S01 pack (8 episodes, one folder, copied one file at a
+# time): E01–E03 fully copied with progressively older mtimes, E04 the newest
+# partial file (actively copying), E05+ absent, plus non-video decoys and an
+# out-of-pack S01E10 decoy.
+private def with_fallout_pack(&)
+  with_tempdir do |dir|
+    season = File.join(dir, "Season 01")
+    e01 = File.join(season, "Fallout - S01E01 - The End.mkv")
+    e02 = File.join(season, "Fallout - S01E02 - The Target.mkv")
+    e03 = File.join(season, "Fallout - S01E03 - The Head.mkv")
+    e04 = File.join(season, "Fallout - S01E04 - The Ghouls.mkv")
+    decoy = File.join(season, "Fallout - S01E10 - Decoy.mkv")
+    write_sized(e01, 3_000_i64) # done
+    write_sized(e02, 2_680_i64) # done
+    write_sized(e03, 2_800_i64) # done
+    write_sized(e04, 574_i64)   # actively copying (partial)
+    # Non-video decoys and an out-of-pack episode decoy.
+    write_sized(File.join(season, "Fallout - S01E01 - The End.nfo"), 500_i64)
+    write_sized(File.join(season, "Fallout - S01E01-thumb.jpg"), 500_i64)
+    write_sized(decoy, 9_000_i64)
+
+    now = Time.utc
+    File.touch(e01, now - 30.minutes)
+    File.touch(e02, now - 20.minutes)
+    File.touch(e03, now - 10.minutes)
+    File.touch(decoy, now - 40.minutes)
+    File.touch(e04, now) # newest ⇒ active
+    yield dir
+  end
+end
+
 describe ArrTop::ImportWatch do
   describe ".progress" do
     it "returns nil when dest_folder is nil" do
@@ -213,6 +244,59 @@ describe ArrTop::ImportWatch do
           progress = ArrTop::ImportWatch.progress(dir, 8_000_i64).as(ArrTop::ImportProgress)
           progress.file.should eq(newest)
         end
+      end
+    end
+  end
+
+  # Episode-aware watch that also reports whether THIS episode's file is the
+  # folder's newest-mtime video (the one actively being copied). Mirrors the live
+  # Fallout S01 pack: E01–E03 fully copied with older mtimes, E04 the newest
+  # partial file, E05+ absent, plus non-video decoys and an out-of-range decoy.
+  describe ".episode_progress" do
+    it "reports the active/newest episode with its partial bytes and active=true" do
+      with_fallout_pack do |dir|
+        # Per-episode estimate: ~22.96 GB / 8 ≈ 2.87 GB (use 2870 here at scale).
+        progress, active = ArrTop::ImportWatch.episode_progress(dir, 2_870_i64, 1, 4)
+          .as({ArrTop::ImportProgress, Bool})
+        progress.file.should end_with("S01E04 - The Ghouls.mkv")
+        progress.bytes.should eq(574_i64)
+        active.should be_true
+        progress.percent.should be_close(20.0, 0.2)
+      end
+    end
+
+    it "reports a completed episode (older mtime) as present-but-not-active" do
+      with_fallout_pack do |dir|
+        {1, 2, 3}.each do |episode|
+          progress, active = ArrTop::ImportWatch.episode_progress(dir, 2_870_i64, 1, episode)
+            .as({ArrTop::ImportProgress, Bool})
+          progress.file.should contain("S01E0#{episode}")
+          active.should be_false # older mtime ⇒ already copied, not the active file
+        end
+      end
+    end
+
+    it "returns nil for an episode with no file present yet (E05)" do
+      with_fallout_pack do |dir|
+        ArrTop::ImportWatch.episode_progress(dir, 2_870_i64, 1, 5).should be_nil
+      end
+    end
+
+    it "ignores non-video decoys when matching an episode" do
+      with_fallout_pack do |dir|
+        progress, _ = ArrTop::ImportWatch.episode_progress(dir, 2_870_i64, 1, 1)
+          .as({ArrTop::ImportProgress, Bool})
+        progress.file.should end_with(".mkv") # not the .nfo / -thumb.jpg
+        progress.bytes.should eq(3_000_i64)
+      end
+    end
+
+    it "returns nil off-host / blank folder / non-positive target" do
+      ArrTop::ImportWatch.episode_progress(nil, 100_i64, 1, 4).should be_nil
+      ArrTop::ImportWatch.episode_progress("   ", 100_i64, 1, 4).should be_nil
+      ArrTop::ImportWatch.episode_progress("/no/such/arrtop/folder", 100_i64, 1, 4).should be_nil
+      with_fallout_pack do |dir|
+        ArrTop::ImportWatch.episode_progress(dir, 0_i64, 1, 4).should be_nil
       end
     end
   end

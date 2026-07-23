@@ -155,4 +155,22 @@ describe ArrTop::CLI do
       backends[0].name.should eq("good")
     end
   end
+
+  # The IMPORT% cell renders straight off the resolved display progress, so the
+  # snapshot always agrees with the TUI (both go through TUI.resolve_display).
+  describe ".import_cell" do
+    it "shows — when there is no progress (pending / non-importing / unwatchable)" do
+      ArrTop::CLI.import_cell(nil).should eq("—")
+    end
+
+    it "shows a finished episode as 100.0%" do
+      done = ArrTop::ImportProgress.new("/tv/E01.mkv", 2_870_i64, 2_870_i64)
+      ArrTop::CLI.import_cell(done).should eq("100.0%")
+    end
+
+    it "shows an actively-copying episode's estimated percentage" do
+      active = ArrTop::ImportProgress.new("/tv/E04.mkv", 574_i64, 2_870_i64)
+      ArrTop::CLI.import_cell(active).should eq("20.0%")
+    end
+  end
 end

@@ -187,7 +187,13 @@ module ArrTop
       # One pass: read each row's live import progress once, reclassify it into an
       # effective display state (+ possibly synthesized progress), then derive the
       # aggregate copy speed from the effective progress (one sample per folder).
-      decisions = rows.map { |row| TUI.display_state_and_progress(row, import_progress(row)) }
+      #
+      # A Sonarr season pack reports the *whole pack's* size on every episode row
+      # (there is no per-episode size in the API), so split it across the pack's
+      # episodes — the rows sharing this row's `download_id` — to get a realistic
+      # per-episode target (see `TUI.effective_target`).
+      group_counts = TUI.download_group_counts(rows)
+      decisions = rows.map { |row| TUI.resolve_display(row, group_counts) }
       states = decisions.map { |decision| decision[0] }
       imports = decisions.map { |decision| decision[1] }
       speed = aggregate_speed(rows, imports)
@@ -281,43 +287,100 @@ module ArrTop
       end
     end
 
-    # Live import (copy) progress for an `Importing` row that arrtop can watch on
-    # disk, or `nil` for every other row and for an importing row it cannot watch
-    # (off-host / destination file not yet created).
-    private def import_progress(row : QueueRow) : ImportProgress?
-      return nil unless row.state == State::Importing
-      return nil if row.dest_folder.nil?
-      # Episode rows pass season/episode so ImportWatch matches THIS episode's
-      # file out of a season pack; movies pass nil → legacy newest-file behaviour.
-      ImportWatch.progress(row.dest_folder, row.import_target,
-        row.season_number, row.episode_number)
+    # The single source of truth for a row's effective display, shared by the live
+    # TUI (`build_frame`) and the plain-text snapshot (`CLI.print_snapshot`) so the
+    # two never disagree. Given a row and the queue's `download_id` → count map
+    # (from `download_group_counts`), it chains the per-episode pipeline —
+    # `effective_target` (split a season pack's total across its episodes) →
+    # `watch_progress` (read this episode's file + whether it's the active copy) →
+    # `display_state_and_progress` (reclassify done/active/pending) — and returns
+    # the effective `{State, ImportProgress?}` to render.
+    def self.resolve_display(row : QueueRow,
+                             group_counts : Hash(String, Int32)) : {State, ImportProgress?}
+      target = effective_target(row, group_counts)
+      on_disk, active = watch_progress(row, target)
+      display_state_and_progress(row, on_disk, active, target)
     end
 
-    # Pure reclassification: given a row and the import progress found on disk for
-    # it, decide the effective display `State` and the `ImportProgress?` to render.
+    # Live import (copy) progress for an `Importing` row that arrtop can watch on
+    # disk, paired with whether the matched file is the folder's **active**
+    # (newest-mtime) copy. Returns `{nil, false}` for every non-importing row and
+    # for an importing row it cannot watch (off-host / file not yet created).
+    #
+    # *target* is the effective per-episode target (see `effective_target`), used
+    # as the bar's denominator. Episode rows use the season/episode-aware watch so
+    # each row watches THIS episode's file out of a season pack (and learns
+    # whether it is the one being copied); movies use the folder-wide newest file.
+    def self.watch_progress(row : QueueRow, target : Int64) : {ImportProgress?, Bool}
+      return {nil, false} unless row.state == State::Importing
+      folder = row.dest_folder
+      return {nil, false} if folder.nil?
+
+      season = row.season_number
+      episode = row.episode_number
+      if season && episode
+        result = ImportWatch.episode_progress(folder, target, season, episode)
+        result ? {result[0], result[1]} : {nil, false}
+      else
+        {ImportWatch.progress(folder, target), false}
+      end
+    end
+
+    # Counts how many queue rows share each `download_id` (nil ids ignored). A
+    # Sonarr season pack lists one row per episode, all sharing one download, so
+    # this count is "episodes in the pack". Pure, so it's unit-testable.
+    def self.download_group_counts(rows : Array(QueueRow)) : Hash(String, Int32)
+      counts = Hash(String, Int32).new(0)
+      rows.each do |row|
+        id = row.download_id
+        counts[id] += 1 if id
+      end
+      counts
+    end
+
+    # The effective per-episode import target for *row*. The Sonarr API reports the
+    # *whole pack's* size on every episode row (no per-episode size), so for an
+    # episode row that shares its `download_id` with others (a season pack of
+    # count > 1) the target is estimated as `import_target // count`. Single-file
+    # downloads and movies keep the reported `import_target`. Pure/unit-testable.
+    def self.effective_target(row : QueueRow, group_counts : Hash(String, Int32)) : Int64
+      return row.import_target unless row.media_kind == :episode
+      id = row.download_id
+      return row.import_target if id.nil?
+      count = group_counts[id]? || 1
+      count > 1 ? row.import_target // count : row.import_target
+    end
+
+    # Pure reclassification: given a row, the import progress found on disk for it,
+    # whether that file is the folder's **active** (newest-mtime) copy, and the
+    # effective per-episode *target*, decide the effective display `State` and the
+    # `ImportProgress?` to render.
     #
     # Only a Sonarr **episode** row the *arr reports as `Importing` is touched (a
-    # season pack lists one importing row per episode, all sharing one folder):
-    # - `episode_has_file` ⇒ Importing at 100% (synthesize a full progress if the
-    #   on-disk match didn't already read ~100%, so a done episode always reads
-    #   100% even when filename matching failed);
-    # - else a matched on-disk file ⇒ Importing with that file's bar;
-    # - else (no file yet) ⇒ ImportPending (pending, no bar).
+    # season pack lists one importing row per episode, all sharing one folder; the
+    # pack is copied one file at a time, so at most one episode's file is active):
+    # - no matching file on disk ⇒ `ImportPending` (no bar), unless
+    #   `episode_has_file` says Sonarr already imported it ⇒ Importing at 100%
+    #   (a filename-match fallback);
+    # - a matching file that is NOT the active/newest copy ⇒ a done episode ⇒
+    #   Importing at 100% (synthesize `bytes == target`);
+    # - a matching file that IS the active/newest copy ⇒ Importing with its real
+    #   bar (`file_bytes / target`).
     # Movie rows and non-importing rows keep their real state and import.
-    def self.display_state_and_progress(row : QueueRow, on_disk : ImportProgress?) : {State, ImportProgress?}
+    def self.display_state_and_progress(row : QueueRow, on_disk : ImportProgress?,
+                                        active : Bool, target : Int64) : {State, ImportProgress?}
       return {row.state, on_disk} unless row.media_kind == :episode && row.state == State::Importing
 
-      if row.episode_has_file
-        done = on_disk
-        if done.nil? || done.percent < 100.0
-          file = on_disk.try(&.file) || ""
-          done = ImportProgress.new(file, row.import_target, row.import_target)
+      if on_disk.nil?
+        if row.episode_has_file
+          {State::Importing, ImportProgress.new("", target, target)}
+        else
+          {State::ImportPending, nil}
         end
-        {State::Importing, done}
-      elsif on_disk
+      elsif active
         {State::Importing, on_disk}
       else
-        {State::ImportPending, nil}
+        {State::Importing, ImportProgress.new(on_disk.file, target, target)}
       end
     end
 

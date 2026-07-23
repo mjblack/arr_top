@@ -212,45 +212,50 @@ module ArrTop
       argv.any? { |arg| arg == "--version" || arg == "-v" }
     end
 
-    # Width the movie (media name) column is truncated to in the snapshot table.
-    MOVIE_WIDTH = 24
+    # Width the media (movie/series) name column is truncated to in the snapshot.
+    MEDIA_WIDTH = 24
 
     # Width the torrent (release title) column is truncated to in the snapshot.
     TITLE_WIDTH = 40
 
     # Prints a plain, ANSI-free aligned table of *rows* in the same column order
-    # as the TUI: movie (media name), torrent (release title), status, download
-    # %, import %. The IMPORT% column shows the live copy percentage read off
-    # disk for `Importing` rows (see `ImportWatch`); it is `—` for non-importing
-    # rows and for importing rows arrtop cannot watch (off-host, or the
-    # destination file not yet created). Used for non-tty output and `--once`.
+    # as the TUI: media name, torrent (release title), status, download %, import
+    # %. STATUS and IMPORT% come from the SAME per-episode reclassification the
+    # TUI uses (`TUI.resolve_display`), so a season pack renders identically here:
+    # already-copied episodes read `100.0%`, the one actively copying reads its
+    # estimated %, and not-yet-started episodes show `pending` with `—`. The
+    # IMPORT% cell is `—` for non-importing rows and for importing rows arrtop
+    # cannot watch (off-host / destination file not yet created). Used for non-tty
+    # output and `--once`.
     private def self.print_snapshot(rows : Array(QueueRow)) : Nil
       if rows.empty?
         puts "queue is empty"
         return
       end
 
+      # One shared count map (download_id → episodes in the pack), same as the TUI.
+      group_counts = TUI.download_group_counts(rows)
+
       printf("%-*s  %-*s  %-12s %6s %8s\n",
-        MOVIE_WIDTH, "MOVIE", TITLE_WIDTH, "TORRENT", "STATUS", "DL%", "IMPORT%")
+        MEDIA_WIDTH, "MEDIA", TITLE_WIDTH, "TORRENT", "STATUS", "DL%", "IMPORT%")
       rows.each do |row|
+        state, progress = TUI.resolve_display(row, group_counts)
         printf(
           "%-*s  %-*s  %-12s %5.1f%% %8s\n",
-          MOVIE_WIDTH, truncate(row.media_name || "—", MOVIE_WIDTH),
+          MEDIA_WIDTH, truncate(row.media_name || "—", MEDIA_WIDTH),
           TITLE_WIDTH, truncate(row.title || "", TITLE_WIDTH),
-          Render::STATE_LABELS[row.state]? || "other",
+          Render::STATE_LABELS[state]? || "other",
           row.download_percent,
-          import_percent(row),
+          import_cell(progress),
         )
       end
     end
 
-    # The IMPORT% cell for *row*: the live copy percentage (e.g. `26.0%`) for an
-    # `Importing` row arrtop can watch on disk, or `—` for every other row and
-    # when the copy is unwatchable (off-host / destination file not yet created).
-    private def self.import_percent(row : QueueRow) : String
-      return "—" unless row.state == State::Importing
-
-      progress = ImportWatch.progress(row.dest_folder, row.import_target)
+    # The IMPORT% cell for a resolved display *progress*: the copy percentage
+    # (e.g. `26.0%`, or `100.0%` for a finished season-pack episode), or `—` when
+    # there is no progress to show (non-importing rows, pending episodes, and
+    # importing rows arrtop cannot watch). Pure, so it's unit-testable.
+    def self.import_cell(progress : ImportProgress?) : String
       progress ? "#{progress.percent.round(1)}%" : "—"
     end
 
