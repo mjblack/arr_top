@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-23
+
+### Fixed
+
+- Season-pack per-episode progress now works against a live Sonarr (v0.3.3's
+  attempt did not): the queue is fetched with episode data, so each episode is
+  matched to its own destination file. The actively-copying episode shows a live
+  bar, already-copied episodes show 100%, and not-yet-started episodes show
+  pending — instead of every episode showing the same percentage.
+
+### Added
+
+- A **SIZE** column for each entry. While importing it shows the on-disk vs total
+  bytes as a pair (e.g. `1.9/2.9 GB`, `0/2.9 GB` at the start); otherwise it shows
+  just the size to import (e.g. `2.9 GB`). Present in both the TUI and the
+  `--once` snapshot.
+
 ## [0.3.3] - 2026-07-22
 
 ### Fixed
